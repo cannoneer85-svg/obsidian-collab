@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
+import CodeMirror, { EditorView } from '@uiw/react-codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { 
   Heading1, Heading2, Heading3, Bold, Italic, List, CheckSquare, 
@@ -39,6 +39,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [wikiDropdownOpen, setWikiDropdownOpen] = useState(false);
   const [wikiSearch, setWikiSearch] = useState('');
   const [editorSelection, setEditorSelection] = useState<{ anchor: number; head: number } | null>(null);
+  const [dropdownCoords, setDropdownCoords] = useState<{ top: number; left: number } | null>(null);
   
   const editorRef = useRef<any>(null);
 
@@ -207,23 +208,51 @@ export const Editor: React.FC<EditorProps> = ({
   const handleEditorChange = (value: string, viewUpdate: any) => {
     setContent(value);
     
-    // Check if user just typed '[['
     const state = viewUpdate.state;
     const selection = state.selection.main;
     const pos = selection.from;
+    const view = viewUpdate.view;
+    
+    // Check if user just typed '[['
     const textBefore = state.sliceDoc(Math.max(0, pos - 2), pos);
     
     if (textBefore === '[[') {
       setWikiDropdownOpen(true);
       setWikiSearch('');
       setEditorSelection({ anchor: pos, head: pos });
-    } else if (wikiDropdownOpen) {
-      // Get search query typed after [[
-      const textAfterBracket = state.sliceDoc(editorSelection?.anchor || 0, pos);
-      if (textAfterBracket.includes('\n') || textAfterBracket.includes(']]')) {
+      
+      // Get coordinates of cursor to display popup exactly there!
+      if (view) {
+        const coords = view.coordsAtPos(pos);
+        if (coords) {
+          setDropdownCoords({
+            top: coords.bottom + 8, // Place popup 8px below cursor
+            left: coords.left
+          });
+        }
+      }
+    } else if (wikiDropdownOpen && editorSelection) {
+      const triggerPos = editorSelection.anchor - 2;
+      const currentTriggerText = state.sliceDoc(triggerPos, triggerPos + 2);
+      const textAfterBracket = state.sliceDoc(editorSelection.anchor, pos);
+      
+      // If brackets are deleted, or line break occurs, or link is closed -> close dropdown
+      if (currentTriggerText !== '[[' || textAfterBracket.includes('\n') || textAfterBracket.includes(']]')) {
         setWikiDropdownOpen(false);
+        setDropdownCoords(null);
       } else {
         setWikiSearch(textAfterBracket);
+        
+        // Update coords dynamically as cursor moves
+        if (view) {
+          const coords = view.coordsAtPos(pos);
+          if (coords) {
+            setDropdownCoords({
+              top: coords.bottom + 8,
+              left: coords.left
+            });
+          }
+        }
       }
     }
   };
@@ -396,8 +425,14 @@ export const Editor: React.FC<EditorProps> = ({
       {/* Editor Main Area */}
       <div className="flex-1 relative overflow-hidden bg-background-editor text-sm min-h-[300px]">
         {/* Floating WikiLinks Autocomplete Dropdown */}
-        {wikiDropdownOpen && (
-          <div className="absolute z-20 left-10 top-12 w-64 glass-panel border border-primary/30 rounded-xl shadow-glass overflow-hidden flex flex-col glow-active">
+        {wikiDropdownOpen && dropdownCoords && (
+          <div 
+            className="fixed z-50 w-64 glass-panel border border-primary/30 rounded-xl shadow-glass overflow-hidden flex flex-col glow-active"
+            style={{ 
+              top: `${dropdownCoords.top}px`, 
+              left: `${dropdownCoords.left}px` 
+            }}
+          >
             <div className="p-2 border-b border-white/5 bg-black/30">
               <input
                 type="text"
@@ -437,7 +472,7 @@ export const Editor: React.FC<EditorProps> = ({
               ref={editorRef}
               value={content}
               height="100%"
-              extensions={[markdown({ base: markdownLanguage })]}
+              extensions={[markdown({ base: markdownLanguage }), EditorView.lineWrapping]}
               theme="dark" // UIW standard dark theme
               editable={!isReadOnly && !lockedBy}
               onChange={handleEditorChange}
