@@ -120,7 +120,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Filter notes by search query
+  // Expand all folders in the file tree
+  const expandAllFolders = () => {
+    const folders = notes.filter(n => n.is_directory);
+    const next: Record<string, boolean> = {};
+    folders.forEach(f => {
+      next[f.relative_path] = true;
+    });
+    setExpandedFolders(next);
+  };
+
+  // Collapse all folders in the file tree
+  const collapseAllFolders = () => {
+    setExpandedFolders({});
+  };
   const filteredNotes = useMemo(() => {
     if (!searchQuery) return notes;
     return notes.filter(n => n.title.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -282,17 +295,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Mirrored File Tree Root */}
       <div className="flex-1 overflow-y-auto px-2 py-1">
-        <div className="flex items-center justify-between px-2 py-1 rounded text-[10px] font-bold text-text-disabled uppercase tracking-wider">
+        <div className="flex items-center justify-between px-2 py-1.5 rounded text-[10px] font-bold text-text-disabled uppercase tracking-wider select-none">
           <span>Проводник заметок</span>
-          {selectedParentFolder && (
-            <button 
-              onClick={() => setSelectedParentFolder('')}
-              className="text-primary hover:underline hover:text-white cursor-pointer"
-              title="Сбросить выбор папки на Корень"
+          <div className="flex items-center space-x-2.5 normal-case font-medium">
+            <button
+              onClick={expandAllFolders}
+              className="hover:text-white text-text-disabled transition-colors cursor-pointer flex items-center"
+              title="Развернуть все папки"
             >
-              Корень
+              <FolderOpen className="w-3.5 h-3.5" />
             </button>
-          )}
+            <button
+              onClick={collapseAllFolders}
+              className="hover:text-white text-text-disabled transition-colors cursor-pointer flex items-center"
+              title="Свернуть все папки"
+            >
+              <Folder className="w-3.5 h-3.5" />
+            </button>
+            {selectedParentFolder && (
+              <button 
+                onClick={() => setSelectedParentFolder('')}
+                className="text-primary hover:underline hover:text-white cursor-pointer border-l border-white/10 pl-2 ml-1"
+                title="Сбросить выбор папки на Корень"
+              >
+                Корень
+              </button>
+            )}
+          </div>
         </div>
         {notes.length === 0 ? (
           <div className="text-center text-text-disabled text-xs mt-8">
