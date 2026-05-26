@@ -172,6 +172,97 @@ router.delete('/', authenticateJWT, canEdit, async (req, res) => {
   }
 });
 
+// 5.5. Rename note or folder (Self-healing DB index updates for files and nested directories)
+router.post('/rename', authenticateJWT, canEdit, async (req, res) => {
+  const { relative_path, new_name } = req.body;
+  if (!relative_path || !new_name) {
+    return res.status(400).json({ error: 'relative_path and new_name are required' });
+  }
+
+  const trimmedName = new_name.trim();
+  const illegalChars = /[\\/:*?"<>|]/;
+  if (illegalChars.test(trimmedName)) {
+    return res.status(400).json({ error: 'Имя содержит запрещенные символы файловой системы' });
+  }
+
+  const oldNormPath = normalizePath(relative_path);
+  const parentDir = normalizePath(dirname(oldNormPath)) === '.' ? '' : normalizePath(dirname(oldNormPath));
+  
+  // Calculate new path relative to parent directory
+  let newNormPath = parentDir ? `${parentDir}/${trimmedName}` : trimmedName;
+  
+  const oldAbsolutePath = join(vaultPath, oldNormPath);
+  let isDirectory = false;
+  
+  try {
+    if (!fs.existsSync(oldAbsolutePath)) {
+      return res.status(404).json({ error: 'File or folder not found on disk' });
+    }
+
+    isDirectory = fs.statSync(oldAbsolutePath).isDirectory();
+    
+    // Automatically preserve .md extension for notes
+    if (!isDirectory && !newNormPath.endsWith('.md')) {
+      newNormPath += '.md';
+    }
+
+    const newAbsolutePath = join(vaultPath, newNormPath);
+
+    if (fs.existsSync(newAbsolutePath) && oldNormPath.toLowerCase() !== newNormPath.toLowerCase()) {
+      return res.status(409).json({ error: 'Файл или папка с таким названием уже существует' });
+    }
+
+    // 1. Rename physically on disk
+    fs.renameSync(oldAbsolutePath, newAbsolutePath);
+
+    // 2. Query all database notes to perform a synchronous cascade rename (for directory renames)
+    const allNotes = await all('SELECT * FROM notes');
+    
+    // Select this note/folder and all recursively nested children
+    const targets = allNotes.filter(n => n.relative_path === oldNormPath || n.relative_path.startsWith(oldNormPath + '/'));
+
+    for (const note of targets) {
+      const suffix = note.relative_path.slice(oldNormPath.length);
+      const childNewPath = newNormPath + suffix;
+      
+      const parentSuffix = note.parent_path.startsWith(oldNormPath) 
+        ? note.parent_path.slice(oldNormPath.length) 
+        : null;
+      const childNewParent = parentSuffix !== null ? (newNormPath + parentSuffix) : note.parent_path;
+
+      // Extract new title (either new name or nested child's original title)
+      const childNewTitle = note.relative_path === oldNormPath 
+        ? trimmedName.replace(/\.md$/, '') 
+        : note.title;
+
+      // Update SQLite tables
+      await run('UPDATE notes SET relative_path = ?, parent_path = ?, title = ? WHERE relative_path = ?', 
+        [childNewPath, childNewParent, childNewTitle, note.relative_path]);
+      await run('UPDATE versions SET relative_path = ? WHERE relative_path = ?', 
+        [childNewPath, note.relative_path]);
+      await run('UPDATE locks SET relative_path = ? WHERE relative_path = ?', 
+        [childNewPath, note.relative_path]);
+    }
+
+    // 3. Broadcast rename event instantly to all clients via WebSockets
+    req.app.get('io').emit('file-rename', { 
+      old_path: oldNormPath, 
+      new_path: newNormPath,
+      new_title: trimmedName.replace(/\.md$/, ''),
+      is_directory: isDirectory
+    });
+
+    res.json({ 
+      message: 'Renamed successfully', 
+      old_path: oldNormPath, 
+      new_path: newNormPath 
+    });
+  } catch (err) {
+    console.error(`Error renaming resource ${oldNormPath} to ${newNormPath}:`, err);
+    res.status(500).json({ error: 'Failed to rename resource' });
+  }
+});
+
 // 6. Upload Image Attachment (via base64)
 router.post('/upload-image', authenticateJWT, canEdit, async (req, res) => {
   const { filename, base64Data } = req.body;

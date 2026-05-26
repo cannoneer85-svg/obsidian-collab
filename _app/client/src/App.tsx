@@ -126,6 +126,29 @@ export default function App() {
       setActiveNotePath(prev => prev === relative_path ? null : prev);
     });
 
+    socketInstance.on('file-rename', ({ old_path, new_path }: { old_path: string; new_path: string }) => {
+      loadNotes();
+      
+      // Update tabs lists (including children if it was a directory rename)
+      setOpenedTabs(prev => prev.map(t => {
+        if (t === old_path) return new_path;
+        if (t.startsWith(old_path + '/')) {
+          return new_path + t.slice(old_path.length);
+        }
+        return t;
+      }));
+
+      // Update active note path (including nested notes)
+      setActiveNotePath(prev => {
+        if (!prev) return null;
+        if (prev === old_path) return new_path;
+        if (prev.startsWith(old_path + '/')) {
+          return new_path + prev.slice(old_path.length);
+        }
+        return prev;
+      });
+    });
+
     return () => {
       socketInstance.disconnect();
     };
@@ -268,6 +291,55 @@ export default function App() {
     }
   };
 
+  // Rename folder or note
+  const handleRenameResource = async (oldPath: string, newName: string) => {
+    try {
+      const res = await fetch('/api/notes/rename', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify({ relative_path: oldPath, new_name: newName })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Ошибка переименования');
+      }
+
+      // If active note was renamed, update it reactively
+      if (oldPath === activeNotePath) {
+        setActiveNotePath(data.new_path);
+        setOpenedTabs(prev => prev.map(t => t === oldPath ? data.new_path : t));
+        window.location.hash = encodeURIComponent(data.new_path);
+      } else if (openedTabs.includes(oldPath)) {
+        // If note is open but not active, just update the tab
+        setOpenedTabs(prev => prev.map(t => t === oldPath ? data.new_path : t));
+      } else {
+        // Handle child files when a parent directory was renamed
+        setOpenedTabs(prev => prev.map(t => {
+          if (t.startsWith(oldPath + '/')) {
+            return data.new_path + t.slice(oldPath.length);
+          }
+          return t;
+        }));
+        setActiveNotePath(prev => {
+          if (prev && prev.startsWith(oldPath + '/')) {
+            const nextPath = data.new_path + prev.slice(oldPath.length);
+            window.location.hash = encodeURIComponent(nextPath);
+            return nextPath;
+          }
+          return prev;
+        });
+      }
+
+      await loadNotes();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   // Fetch note's history list
   const toggleHistoryPanel = async () => {
     if (!activeNotePath) return;
@@ -356,6 +428,7 @@ export default function App() {
           onNoteSelect={openNote}
           onCreateResource={handleCreateResource}
           onDeleteResource={handleDeleteResource}
+          onRenameResource={handleRenameResource}
           activeUsers={activeUsers}
           currentUser={currentUser}
           onLogout={handleLogout}

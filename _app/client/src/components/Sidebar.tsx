@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Folder, FolderOpen, FileText, Plus, FolderPlus, Download, 
-  Search, LogOut, Users, ChevronRight, ChevronDown, Trash2
+  Search, LogOut, Users, ChevronRight, ChevronDown, Trash2, Edit2
 } from 'lucide-react';
 
 interface Note {
@@ -23,6 +23,7 @@ interface SidebarProps {
   onNoteSelect: (path: string) => void;
   onCreateResource: (name: string, isDir: boolean, parentPath: string) => void;
   onDeleteResource: (path: string) => void;
+  onRenameResource: (oldPath: string, newName: string) => void;
   activeUsers: UserPresence[];
   currentUser: { username: string; role: string };
   onLogout: () => void;
@@ -35,6 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNoteSelect,
   onCreateResource,
   onDeleteResource,
+  onRenameResource,
   activeUsers,
   currentUser,
   onLogout,
@@ -113,6 +115,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // Handle Note/Folder Rename
+  const handleRename = (path: string, isDir: boolean, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (currentUser.role === 'Viewer') return;
+
+    const currentName = path.split('/').pop()?.replace('.md', '') || '';
+    const newName = prompt(`Введите новое имя для ${isDir ? 'папки' : 'файла'}:`, currentName);
+    if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
+
+    const trimmedName = newName.trim();
+    // Block illegal OS filesystem characters (\ / : * ? " < > |)
+    const illegalChars = /[\\/:*?"<>|]/;
+    if (illegalChars.test(trimmedName)) {
+      alert("Название не может содержать специальные символы файловой системы: \\ / : * ? \" < > |");
+      return;
+    }
+
+    onRenameResource(path, trimmedName);
+  };
+
   // Expand all folders in the file tree
   const expandAllFolders = () => {
     const folders = notes.filter(n => n.is_directory);
@@ -183,13 +205,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   {currentUser.role !== 'Viewer' && (
-                    <button
-                      onClick={(e) => handleDelete(item.relative_path, true, e)}
-                      className="opacity-0 group-hover/dir:opacity-100 p-0.5 hover:bg-red-500/20 hover:text-red-400 text-text-disabled rounded transition-all cursor-pointer"
-                      title="Удалить папку"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center space-x-1 opacity-0 group-hover/dir:opacity-100 transition-all shrink-0">
+                      <button
+                        onClick={(e) => handleRename(item.relative_path, true, e)}
+                        className="p-0.5 hover:bg-white/5 hover:text-primary text-text-disabled rounded cursor-pointer transition-colors"
+                        title="Переименовать папку"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDelete(item.relative_path, true, e)}
+                        className="p-0.5 hover:bg-red-500/20 hover:text-red-400 text-text-disabled rounded cursor-pointer transition-colors"
+                        title="Удалить папку"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -217,13 +248,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   {currentUser.role !== 'Viewer' && (
-                    <button
-                      onClick={(e) => handleDelete(item.relative_path, false, e)}
-                      className="opacity-0 group-hover/file:opacity-100 p-0.5 hover:bg-red-500/20 hover:text-red-400 text-text-disabled rounded transition-all cursor-pointer"
-                      title="Удалить файл"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center space-x-1 opacity-0 group-hover/file:opacity-100 transition-all shrink-0">
+                      <button
+                        onClick={(e) => handleRename(item.relative_path, false, e)}
+                        className="p-0.5 hover:bg-white/5 hover:text-primary text-text-disabled rounded cursor-pointer transition-colors"
+                        title="Переименовать файл"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDelete(item.relative_path, false, e)}
+                        className="p-0.5 hover:bg-red-500/20 hover:text-red-400 text-text-disabled rounded cursor-pointer transition-colors"
+                        title="Удалить файл"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   )}
                 </div>
               </li>
