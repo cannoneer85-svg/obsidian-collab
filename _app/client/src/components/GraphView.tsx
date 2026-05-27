@@ -27,7 +27,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
   const hasInitialFit = useRef(false);
 
   // Safe zoom-to-fit that utilizes D3's native maxZoom limit constraint
-  const triggerClampedFit = (padding: number) => {
+  const triggerClampedFit = (padding: number = 30) => {
     graphRef.current?.zoomToFit(400, padding);
   };
 
@@ -42,7 +42,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     hasInitialFit.current = false;
     // Let CSS transition (300ms) complete fully, then center beautifully
     setTimeout(() => {
-      triggerClampedFit(nextFullscreen ? 80 : 115);
+      triggerClampedFit(30);
     }, 350);
   };
 
@@ -125,8 +125,8 @@ export const GraphView: React.FC<GraphViewProps> = ({
       // Dynamically space nodes to look beautiful and avoid clipping:
       // Spreading few nodes far apart makes the bounding box naturally larger,
       // which results in beautiful framing without having to zoom in too close!
-      const linkDistance = nodeCount <= 2 ? 140 : nodeCount <= 4 ? 90 : 60;
-      const chargeStrength = nodeCount <= 2 ? -250 : nodeCount <= 4 ? -180 : -150;
+      const linkDistance = nodeCount <= 2 ? 180 : nodeCount <= 5 ? 120 : 80;
+      const chargeStrength = nodeCount <= 2 ? -400 : nodeCount <= 5 ? -300 : -200;
 
       graphRef.current.d3Force('charge').strength(chargeStrength);
       graphRef.current.d3Force('link').distance(linkDistance);
@@ -139,7 +139,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
   // Handle engine stop to fit the graph to the container perfectly once fully stabilized
   const handleEngineStop = () => {
     if (!hasInitialFit.current && graphData.nodes.length > 0) {
-      triggerClampedFit(isFullscreen ? 80 : 115);
+      triggerClampedFit(30);
       hasInitialFit.current = true;
     }
   };
@@ -239,7 +239,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
           <ZoomOut className="w-4 h-4" />
         </button>
         <button
-          onClick={() => triggerClampedFit(isFullscreen ? 80 : 115)}
+          onClick={() => triggerClampedFit(30)}
           className="p-1.5 hover:bg-white/5 rounded text-text-muted hover:text-white transition-colors cursor-pointer"
           title="По размеру (Сбросить зум)"
         >
