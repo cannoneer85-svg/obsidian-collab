@@ -26,9 +26,21 @@ export const GraphView: React.FC<GraphViewProps> = ({
   const [graphData, setGraphData] = useState<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] });
   const hasInitialFit = useRef(false);
 
-  // Safe zoom-to-fit that utilizes D3's native maxZoom limit constraint
-  const triggerClampedFit = (padding: number = 30) => {
-    graphRef.current?.zoomToFit(400, padding);
+  // Safe zoom-to-fit that utilizes custom framing for small graphs and D3 fit for larger ones
+  const triggerClampedFit = () => {
+    if (!graphRef.current) return;
+    const nodeCount = graphData.nodes.length;
+    if (nodeCount === 0) return;
+
+    if (nodeCount <= 2) {
+      graphRef.current.centerAt(0, 0, 400);
+      graphRef.current.zoom(1.2, 400);
+    } else if (nodeCount <= 5) {
+      graphRef.current.centerAt(0, 0, 400);
+      graphRef.current.zoom(1.0, 400);
+    } else {
+      graphRef.current.zoomToFit(400, 30);
+    }
   };
 
   // Reset initial fit flag when graph data changes
@@ -42,7 +54,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     hasInitialFit.current = false;
     // Let CSS transition (300ms) complete fully, then center beautifully
     setTimeout(() => {
-      triggerClampedFit(30);
+      triggerClampedFit();
     }, 350);
   };
 
@@ -139,7 +151,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
   // Handle engine stop to fit the graph to the container perfectly once fully stabilized
   const handleEngineStop = () => {
     if (!hasInitialFit.current && graphData.nodes.length > 0) {
-      triggerClampedFit(30);
+      triggerClampedFit();
       hasInitialFit.current = true;
     }
   };
@@ -239,7 +251,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
           <ZoomOut className="w-4 h-4" />
         </button>
         <button
-          onClick={() => triggerClampedFit(30)}
+          onClick={() => triggerClampedFit()}
           className="p-1.5 hover:bg-white/5 rounded text-text-muted hover:text-white transition-colors cursor-pointer"
           title="По размеру (Сбросить зум)"
         >
@@ -355,7 +367,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
             onEngineStop={handleEngineStop}
             backgroundColor="#181818"
             cooldownTicks={100}
-            maxZoom={2.5}
+            maxZoom={40}
             minZoom={0.1}
           />
         )}
