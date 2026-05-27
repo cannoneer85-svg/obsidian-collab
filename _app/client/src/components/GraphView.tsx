@@ -24,24 +24,39 @@ export const GraphView: React.FC<GraphViewProps> = ({
   const graphRef = useRef<any>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [maxZoomLimit, setMaxZoomLimit] = useState<number | undefined>(undefined);
-
   const [graphData, setGraphData] = useState<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] });
+  const [zoomTrigger, setZoomTrigger] = useState<{ padding: number } | null>(null);
+  const hasInitialFit = useRef(false);
 
   // Safe zoom-to-fit that clamps the auto-zoom to prevent massive node scaling,
   // then releases the limit so the user can zoom in manually as much as they want!
   const triggerClampedFit = (padding: number) => {
     setMaxZoomLimit(1.5); // Optimal and safe limit for auto-zoom (prevent giant clipping)
-    graphRef.current?.zoomToFit(400, padding);
-    
-    // Release the constraint after transition animation completes
-    setTimeout(() => {
-      setMaxZoomLimit(50); // High limit for unlimited manual zoom
-    }, 450);
+    setZoomTrigger({ padding });
   };
+
+  // Deterministic zoom-to-fit after maxZoomLimit state update has been applied in DOM
+  useEffect(() => {
+    if (zoomTrigger && maxZoomLimit === 1.5) {
+      graphRef.current?.zoomToFit(400, zoomTrigger.padding);
+      setZoomTrigger(null);
+      
+      const timer = setTimeout(() => {
+        setMaxZoomLimit(50); // High limit for unlimited manual zoom
+      }, 450);
+      return () => clearTimeout(timer);
+    }
+  }, [maxZoomLimit, zoomTrigger]);
+
+  // Reset initial fit flag when graph data changes
+  useEffect(() => {
+    hasInitialFit.current = false;
+  }, [graphData]);
 
   const toggleFullscreen = () => {
     const nextFullscreen = !isFullscreen;
     setIsFullscreen(nextFullscreen);
+    hasInitialFit.current = false;
     // Let CSS transition (300ms) complete fully, then center beautifully
     setTimeout(() => {
       triggerClampedFit(nextFullscreen ? 80 : 115);
@@ -132,11 +147,19 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
       graphRef.current.d3Force('charge').strength(chargeStrength);
       graphRef.current.d3Force('link').distance(linkDistance);
-      setTimeout(() => {
-        triggerClampedFit(isFullscreen ? 80 : 115);
-      }, 500);
+      
+      // Reheat the force simulation to let the nodes spread out beautifully
+      graphRef.current.d3ReheatSimulation();
     }
-  }, [graphData, isFullscreen]);
+  }, [graphData]);
+
+  // Handle engine stop to fit the graph to the container perfectly once fully stabilized
+  const handleEngineStop = () => {
+    if (!hasInitialFit.current && graphData.nodes.length > 0) {
+      triggerClampedFit(isFullscreen ? 80 : 115);
+      hasInitialFit.current = true;
+    }
+  };
 
   // Custom node renderer (HTML5 Canvas)
   const drawNode = (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -346,6 +369,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
             onNodeClick={(node: any) => onNoteSelect(node.id)}
             onNodeHover={(node: any) => setHoverNode(node)}
+            onEngineStop={handleEngineStop}
             backgroundColor="#181818"
             cooldownTicks={100}
             maxZoom={maxZoomLimit}
