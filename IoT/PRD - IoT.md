@@ -1,3 +1,0 @@
-# PRD - IoT
-
-[[PRD - Shell]]

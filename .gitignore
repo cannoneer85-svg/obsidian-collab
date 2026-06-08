@@ -22,6 +22,15 @@ _app/client/dist/
 Thumbs.db
 desktop.ini
 
+# Exclude all markdown files and user note directories from Git
+*.md
+!_app/**/*.md
+/ERP + CRM/
+/IoT/
+/PXE/
+/Shell/
+/Ideas/
+
 # Gemini system generated tasks and logs
 .system_generated/
 brain/
@@ -29,3 +38,4 @@ scratch/
 task.md
 walkthrough.md
 implementation_plan.md
+
