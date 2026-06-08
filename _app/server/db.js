@@ -1,11 +1,13 @@
 import sqlite3 from 'sqlite3';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const dbPath = join(__dirname, 'database.sqlite');
+const dbPath = process.env.DATABASE_PATH 
+  ? resolve(process.env.DATABASE_PATH) 
+  : join(__dirname, 'database.sqlite');
 
 // Connect to SQLite
 const db = new sqlite3.Database(dbPath);

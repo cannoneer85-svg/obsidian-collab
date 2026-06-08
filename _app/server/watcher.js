@@ -1,12 +1,14 @@
 import chokidar from 'chokidar';
 import fs from 'fs';
-import { join, relative, dirname, basename, extname } from 'path';
+import { join, relative, dirname, basename, extname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { run, get, all } from './db.js';
 
-// Resolve vault path (parent directory of _app)
+// Resolve vault path (parent directory of _app, or custom env path)
 const __dirname = dirname(fileURLToPath(import.meta.url));
-export const vaultPath = join(__dirname, '..', '..');
+export const vaultPath = process.env.VAULT_PATH 
+  ? resolve(process.env.VAULT_PATH) 
+  : join(__dirname, '..', '..');
 
 // Helper to normalize path separators to forward slashes for cross-platform matching
 const normalizePath = (p) => p.replace(/\\/g, '/');
