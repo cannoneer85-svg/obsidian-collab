@@ -160,6 +160,10 @@ export default function App() {
       const res = await fetch('/api/notes', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
       const data = await res.json();
       if (res.ok) {
         setNotes(data);
@@ -185,6 +189,10 @@ export default function App() {
         const res = await fetch(`/api/notes/content?relative_path=${encodeURIComponent(path)}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
+        if (res.status === 401 || res.status === 403) {
+          handleLogout();
+          return;
+        }
         const data = await res.json();
         if (res.ok) {
           setNoteContents(prev => ({ ...prev, [path]: data.content }));
