@@ -1,0 +1,560 @@
+import React, { useState, useEffect } from 'react';
+import { X, Upload, UserPlus, Trash2, AlertTriangle, Check, Users, ShieldAlert, FolderOpen } from 'lucide-react';
+
+interface User {
+  id: number;
+  username: string;
+  role: 'Admin' | 'Editor' | 'Viewer';
+  created_at: string;
+}
+
+interface SettingsPanelProps {
+  isOpen: boolean;
+  onClose: () => void;
+  currentUser: { username: string; role: string };
+  selectedParentFolder: string;
+  token: string | null;
+  onVaultReload: () => void;
+}
+
+export const SettingsPanel: React.FC<SettingsPanelProps> = ({
+  isOpen,
+  onClose,
+  currentUser,
+  selectedParentFolder,
+  token,
+  onVaultReload,
+}) => {
+  const [activeTab, setActiveTab] = useState<'import' | 'users'>('import');
+  
+  // ZIP / MD Upload State
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [overwrite, setOverwrite] = useState(false);
+  const [mdFile, setMdFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  // User Management State
+  const [users, setUsers] = useState<User[]>([]);
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState<'Admin' | 'Editor' | 'Viewer'>('Viewer');
+  const [userStatus, setUserStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (isOpen && currentUser.role === 'Admin') {
+      fetchUsers();
+    }
+  }, [isOpen, currentUser]);
+
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch('/api/auth/users', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setUsers(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch users:', err);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  // Handle ZIP import
+  const handleZipImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!zipFile) return;
+
+    if (overwrite) {
+      const confirmed = confirm(
+        'ВНИМАНИЕ! Вы выбрали опцию "Перезаписать все". Это БЕЗВОЗВРАТНО удалит все ваши текущие markdown-файлы и папки с ними на сервере перед распаковкой архива. Продолжить?'
+      );
+      if (!confirmed) return;
+    }
+
+    setUploading(true);
+    setUploadStatus({ type: 'info', message: 'Загрузка и распаковка архива...' });
+
+    try {
+      const fileBuffer = await zipFile.arrayBuffer();
+      const res = await fetch(`/api/notes/import?overwrite=${overwrite}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/zip',
+        },
+        body: fileBuffer,
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setUploadStatus({ type: 'success', message: 'Хранилище успешно импортировано!' });
+        setZipFile(null);
+        onVaultReload();
+      } else {
+        setUploadStatus({ type: 'error', message: data.error || 'Ошибка при импорте' });
+      }
+    } catch (err) {
+      console.error(err);
+      setUploadStatus({ type: 'error', message: 'Ошибка сети при импорте архива' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Handle Single MD Upload
+  const handleMdUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mdFile) return;
+
+    setUploading(true);
+    setUploadStatus({ type: 'info', message: 'Загрузка MD-документа...' });
+
+    try {
+      const content = await mdFile.text();
+      // Calculate target relative path
+      const targetPath = selectedParentFolder 
+        ? `${selectedParentFolder}/${mdFile.name}` 
+        : mdFile.name;
+
+      const res = await fetch(`/api/notes/upload-md?relative_path=${encodeURIComponent(targetPath)}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'text/markdown',
+        },
+        body: content,
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setUploadStatus({ type: 'success', message: `Файл "${mdFile.name}" успешно загружен!` });
+        setMdFile(null);
+        onVaultReload();
+      } else {
+        setUploadStatus({ type: 'error', message: data.error || 'Ошибка при загрузке MD' });
+      }
+    } catch (err) {
+      console.error(err);
+      setUploadStatus({ type: 'error', message: 'Ошибка сети при загрузке файла' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Handle Create User
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUsername.trim() || !newPassword.trim()) return;
+
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          username: newUsername.trim(),
+          password: newPassword,
+          role: newRole,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setUserStatus({ type: 'success', message: `Пользователь "${newUsername}" успешно создан!` });
+        setNewUsername('');
+        setNewPassword('');
+        setNewRole('Viewer');
+        fetchUsers();
+      } else {
+        setUserStatus({ type: 'error', message: data.error || 'Ошибка создания пользователя' });
+      }
+    } catch (err) {
+      console.error(err);
+      setUserStatus({ type: 'error', message: 'Ошибка сети при создании пользователя' });
+    }
+  };
+
+  // Handle Update Role
+  const handleUpdateRole = async (userId: number, username: string, role: 'Admin' | 'Editor' | 'Viewer') => {
+    const confirmed = confirm(`Вы действительно хотите изменить роль пользователя "${username}" на "${role}"?`);
+    if (!confirmed) {
+      fetchUsers(); // reset dropdown ui
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/auth/users/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        alert(data.error || 'Ошибка при обновлении роли');
+        fetchUsers();
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Ошибка сети при обновлении роли');
+      fetchUsers();
+    }
+  };
+
+  // Handle Delete User
+  const handleDeleteUser = async (userId: number, username: string) => {
+    const confirmed = confirm(`Вы действительно хотите БЕЗВОЗВРАТНО удалить пользователя "${username}"?`);
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/auth/users/${userId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        alert(data.error || 'Ошибка при удалении пользователя');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Ошибка сети при удалении пользователя');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in select-none">
+      <div className="relative w-full max-w-3xl h-[600px] flex flex-col bg-background-panel border border-white/10 rounded-2xl overflow-hidden shadow-glass animate-scale-up">
+        
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-black/20">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center text-primary font-bold uppercase">
+              ⚙️
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-white">Панель управления администратора</h2>
+              <span className="text-[10px] text-text-disabled">Импорт документов и настройки доступа</span>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 hover:bg-white/5 rounded-lg text-text-muted hover:text-white transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Tabs switcher */}
+        <div className="flex border-b border-white/5 bg-black/10 px-6 py-2 space-x-2">
+          <button
+            onClick={() => setActiveTab('import')}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all cursor-pointer ${
+              activeTab === 'import' ? 'bg-primary text-white shadow-glow' : 'text-text-muted hover:text-white'
+            }`}
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>Импорт & Загрузка</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all cursor-pointer ${
+              activeTab === 'users' ? 'bg-primary text-white shadow-glow' : 'text-text-muted hover:text-white'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Пользователи и Роли</span>
+          </button>
+        </div>
+
+        {/* Main Content Area */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {activeTab === 'import' ? (
+            <div className="space-y-6">
+              {uploadStatus && (
+                <div className={`p-4 rounded-xl text-xs flex items-start space-x-2.5 border ${
+                  uploadStatus.type === 'success' 
+                    ? 'bg-green-500/10 border-green-500/20 text-green-400' 
+                    : uploadStatus.type === 'error'
+                    ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                    : 'bg-primary/10 border-primary/20 text-primary'
+                }`}>
+                  {uploadStatus.type === 'success' ? <Check className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
+                  <span>{uploadStatus.message}</span>
+                </div>
+              )}
+
+              {/* ZIP Import Card */}
+              <div className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl space-y-4 text-left">
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1">Импортировать хранилище (.ZIP)</h3>
+                  <p className="text-[11px] text-text-muted">
+                    Загрузите архив `.zip` с вашим деревом заметок. Система распакует его в хранилище.
+                  </p>
+                </div>
+
+                <form onSubmit={handleZipImport} className="space-y-4">
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="file"
+                      accept=".zip"
+                      onChange={(e) => {
+                        setUploadStatus(null);
+                        setZipFile(e.target.files?.[0] || null);
+                      }}
+                      className="hidden"
+                      id="zip-upload-input"
+                      disabled={uploading}
+                    />
+                    <label
+                      htmlFor="zip-upload-input"
+                      className={`px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-medium cursor-pointer transition-colors text-white ${
+                        uploading ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      Выбрать ZIP-файл
+                    </label>
+                    <span className="text-xs text-text-muted truncate max-w-xs">
+                      {zipFile ? zipFile.name : 'Файл не выбран'}
+                    </span>
+                  </div>
+
+                  {/* Mode Option Checkbox */}
+                  <div className="flex items-center space-x-2.5 bg-black/20 p-3 rounded-lg border border-white/5">
+                    <input
+                      type="checkbox"
+                      id="overwrite-vault-checkbox"
+                      checked={overwrite}
+                      onChange={(e) => setOverwrite(e.target.checked)}
+                      disabled={uploading}
+                      className="rounded bg-black/40 border-white/10 text-primary focus:ring-0 cursor-pointer"
+                    />
+                    <label htmlFor="overwrite-vault-checkbox" className="text-xs font-medium text-text cursor-pointer select-none">
+                      Перезаписать все (удалить все текущие md-файлы и папки перед импортом)
+                    </label>
+                  </div>
+
+                  {overwrite ? (
+                    <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 rounded-lg text-[10.5px] flex items-start space-x-2 animate-fade-in">
+                      <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-yellow-500" />
+                      <span>
+                        <strong>Внимание:</strong> При импорте все существующие заметки и папки в корневом каталоге будут <strong>полностью и навсегда удалены</strong> перед распаковкой новых файлов. Служебная папка `_app` и картинки из `assets` будут сохранены.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-primary/10 border border-primary/20 text-primary rounded-lg text-[10.5px] flex items-start space-x-2 animate-fade-in">
+                      <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-primary" />
+                      <span>
+                        <strong>Режим слияния:</strong> новые файлы из архива будут добавлены, а существующие перезапишутся. Текущие заметки, которых нет в архиве, не пострадают.
+                      </span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={!zipFile || uploading}
+                    className="w-full py-2 bg-primary hover:bg-primary-hover active:scale-[0.98] text-white text-xs font-semibold rounded-lg flex items-center justify-center space-x-2 transition-all border border-primary/20 shadow-glow cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Начать импорт архива</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* MD Upload Card */}
+              <div className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl space-y-4 text-left">
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1">Загрузить один документ (.MD)</h3>
+                  <p className="text-[11px] text-text-muted">
+                    Загрузите файл `.md` напрямую в выбранную папку без перезаписи проекта.
+                  </p>
+                </div>
+
+                <form onSubmit={handleMdUpload} className="space-y-4">
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="file"
+                      accept=".md"
+                      onChange={(e) => {
+                        setUploadStatus(null);
+                        setMdFile(e.target.files?.[0] || null);
+                      }}
+                      className="hidden"
+                      id="md-upload-input"
+                      disabled={uploading}
+                    />
+                    <label
+                      htmlFor="md-upload-input"
+                      className={`px-4 py-2 border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-medium cursor-pointer transition-colors text-white ${
+                        uploading ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      Выбрать MD-файл
+                    </label>
+                    <span className="text-xs text-text-muted truncate max-w-xs">
+                      {mdFile ? mdFile.name : 'Файл не выбран'}
+                    </span>
+                  </div>
+
+                  {/* Target Folder Info */}
+                  <div className="flex items-center space-x-2 bg-black/20 p-2.5 rounded-lg border border-white/5 text-[10.5px]">
+                    <FolderOpen className="w-4 h-4 text-primary shrink-0" />
+                    <span className="text-text-muted font-medium">
+                      Загрузить в директорию: <strong className="text-white">{selectedParentFolder || 'Корень'}</strong>
+                    </span>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={!mdFile || uploading}
+                    className="w-full py-2 bg-primary hover:bg-primary-hover active:scale-[0.98] text-white text-xs font-semibold rounded-lg flex items-center justify-center space-x-2 transition-all border border-primary/20 shadow-glow cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Загрузить MD-файл</span>
+                  </button>
+                </form>
+              </div>
+
+            </div>
+          ) : (
+            <div className="space-y-6 text-left">
+              {userStatus && (
+                <div className={`p-4 rounded-xl text-xs flex items-start space-x-2.5 border ${
+                  userStatus.type === 'success' 
+                    ? 'bg-green-500/10 border-green-500/20 text-green-400' 
+                    : 'bg-red-500/10 border-red-500/20 text-red-400'
+                }`}>
+                  {userStatus.type === 'success' ? <Check className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
+                  <span>{userStatus.message}</span>
+                </div>
+              )}
+
+              {/* Create User Form */}
+              <div className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl space-y-4">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Создать нового пользователя</h3>
+                
+                <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <input
+                    type="text"
+                    placeholder="Логин"
+                    value={newUsername}
+                    onChange={(e) => {
+                      setUserStatus(null);
+                      setNewUsername(e.target.value);
+                    }}
+                    className="w-full px-3 py-2 bg-black/30 border border-white/5 focus:border-primary/50 focus:outline-none rounded-lg text-xs text-white"
+                    required
+                  />
+                  <input
+                    type="password"
+                    placeholder="Пароль"
+                    value={newPassword}
+                    onChange={(e) => {
+                      setUserStatus(null);
+                      setNewPassword(e.target.value);
+                    }}
+                    className="w-full px-3 py-2 bg-black/30 border border-white/5 focus:border-primary/50 focus:outline-none rounded-lg text-xs text-white"
+                    required
+                  />
+                  <select
+                    value={newRole}
+                    onChange={(e) => setNewRole(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-black/30 border border-white/5 focus:border-primary/50 focus:outline-none rounded-lg text-xs text-white cursor-pointer"
+                  >
+                    <option value="Viewer" className="bg-[#1e1e1e]">Viewer (Читатель)</option>
+                    <option value="Editor" className="bg-[#1e1e1e]">Editor (Редактор)</option>
+                    <option value="Admin" className="bg-[#1e1e1e]">Admin (Администратор)</option>
+                  </select>
+                  <button
+                    type="submit"
+                    className="w-full py-2 bg-primary hover:bg-primary-hover active:scale-[0.98] text-white text-xs font-semibold rounded-lg flex items-center justify-center space-x-1.5 transition-all border border-primary/20 shadow-glow cursor-pointer"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Добавить</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* Users List Table */}
+              <div className="bg-white/[0.02] border border-white/5 rounded-2xl overflow-hidden">
+                <div className="px-5 py-3 border-b border-white/5 bg-black/10">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">Зарегистрированные пользователи</h3>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-white/5 text-text-disabled bg-black/5">
+                        <th className="px-5 py-3 font-semibold">Логин</th>
+                        <th className="px-5 py-3 font-semibold">Роль в проекте</th>
+                        <th className="px-5 py-3 font-semibold">Дата создания</th>
+                        <th className="px-5 py-3 font-semibold text-right">Действия</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {users.map((user) => {
+                        const isSelf = user.username === currentUser.username;
+                        return (
+                          <tr key={user.id} className="hover:bg-white/[0.01]">
+                            <td className="px-5 py-3 font-medium text-white">
+                              {user.username} {isSelf && <span className="text-[9px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full ml-1">Вы</span>}
+                            </td>
+                            <td className="px-5 py-3">
+                              <select
+                                value={user.role}
+                                disabled={isSelf}
+                                onChange={(e) => handleUpdateRole(user.id, user.username, e.target.value as any)}
+                                className={`px-2 py-1 bg-black/40 border border-white/5 rounded focus:outline-none focus:border-primary/50 text-[11px] cursor-pointer text-white disabled:opacity-50 disabled:cursor-not-allowed`}
+                              >
+                                <option value="Admin">Admin</option>
+                                <option value="Editor">Editor</option>
+                                <option value="Viewer">Viewer</option>
+                              </select>
+                            </td>
+                            <td className="px-5 py-3 text-text-muted">
+                              {new Date(user.created_at).toLocaleString()}
+                            </td>
+                            <td className="px-5 py-3 text-right">
+                              <button
+                                onClick={() => handleDeleteUser(user.id, user.username)}
+                                disabled={isSelf}
+                                className="p-1.5 hover:bg-red-500/20 text-text-disabled hover:text-red-400 rounded-lg transition-colors cursor-pointer disabled:opacity-20 disabled:cursor-not-allowed ml-auto flex items-center"
+                                title={isSelf ? 'Вы не можете удалить свой собственный аккаунт' : 'Удалить пользователя'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          )}
+        </div>
+
+        {/* Footer info bar */}
+        <div className="px-6 py-2.5 border-t border-white/5 bg-black/20 text-[10px] text-text-disabled text-right">
+          <span>Ваша роль: <strong>{currentUser.role}</strong></span>
+        </div>
+
+      </div>
+    </div>
+  );
+};

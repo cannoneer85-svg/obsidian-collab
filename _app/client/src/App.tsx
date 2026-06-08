@@ -5,6 +5,7 @@ import { Editor } from './components/Editor';
 import { GraphView } from './components/GraphView';
 import { DiffViewer } from './components/DiffViewer';
 import { Auth } from './components/Auth';
+import { SettingsPanel } from './components/SettingsPanel';
 import { 
   Network, FileText, History, X, HelpCircle
 } from 'lucide-react';
@@ -42,6 +43,10 @@ export default function App() {
   const [noteContents, setNoteContents] = useState<Record<string, string>>({});
   const [openedTabs, setOpenedTabs] = useState<string[]>([]);
   const [activeNotePath, setActiveNotePath] = useState<string | null>(null);
+  
+  // Admin & settings states
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedParentFolder, setSelectedParentFolder] = useState('');
 
   // Real-time synchronization
   const [socket, setSocket] = useState<any>(null);
@@ -102,6 +107,13 @@ export default function App() {
         delete next[relative_path];
         return next;
       });
+    });
+
+    socketInstance.on('vault-reload', () => {
+      loadNotes();
+      setOpenedTabs([]);
+      setActiveNotePath(null);
+      setNoteContents({});
     });
 
     socketInstance.on('file-create', () => {
@@ -441,6 +453,9 @@ export default function App() {
           currentUser={currentUser}
           onLogout={handleLogout}
           onExport={handleExportVault}
+          selectedParentFolder={selectedParentFolder}
+          onSelectedParentFolderChange={setSelectedParentFolder}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       </div>
 
@@ -614,6 +629,15 @@ export default function App() {
 
         </div>
       </div>
+      
+      <SettingsPanel
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        currentUser={currentUser}
+        selectedParentFolder={selectedParentFolder}
+        token={token}
+        onVaultReload={loadNotes}
+      />
     </div>
   );
 }

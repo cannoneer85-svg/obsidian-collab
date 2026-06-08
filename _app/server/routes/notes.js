@@ -1,7 +1,8 @@
 import express from 'express';
 import fs from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, relative } from 'path';
 import archiver from 'archiver';
+import AdmZip from 'adm-zip';
 import { run, get, all } from '../db.js';
 import { vaultPath } from '../watcher.js';
 import { authenticateJWT } from './auth.js';
@@ -372,6 +373,181 @@ router.get('/export', authenticateJWT, (req, res) => {
   }
 
   archive.finalize();
+});
+
+// Helper to recursively clear only markdown files and empty directories (excluding system folders)
+const clearVaultMarkdown = (dir) => {
+  const items = fs.readdirSync(dir);
+  for (const item of items) {
+    const fullPath = join(dir, item);
+    if (item.startsWith('.') || item === '_app' || item === 'node_modules' || item === 'assets') {
+      continue;
+    }
+    const stat = fs.statSync(fullPath);
+    if (stat.isDirectory()) {
+      clearVaultMarkdown(fullPath);
+      // Delete directory if it is now empty
+      if (fs.readdirSync(fullPath).length === 0) {
+        fs.rmdirSync(fullPath);
+      }
+    } else if (stat.isFile() && item.endsWith('.md')) {
+      fs.unlinkSync(fullPath);
+    }
+  }
+};
+
+// Helper to recursively scan folder and index notes/directories into SQLite
+const scanAndIndex = async (dir, baseDir = vaultPath) => {
+  const items = fs.readdirSync(dir);
+  for (const item of items) {
+    const fullPath = join(dir, item);
+    const relPath = normalizePath(relative(baseDir, fullPath));
+
+    if (item.startsWith('.') || relPath === '_app' || relPath === 'assets' || relPath.startsWith('_app/') || relPath.startsWith('assets/')) {
+      continue;
+    }
+
+    const stat = fs.statSync(fullPath);
+    if (stat.isDirectory()) {
+      const title = item;
+      const parentPath = normalizePath(dirname(relPath)) === '.' ? '' : normalizePath(dirname(relPath));
+
+      const existing = await get('SELECT relative_path FROM notes WHERE relative_path = ?', [relPath]);
+      if (!existing) {
+        await run(
+          'INSERT INTO notes (relative_path, title, is_directory, parent_path, last_edited_by) VALUES (?, ?, ?, ?, ?)',
+          [relPath, title, 1, parentPath, 'Внешняя система']
+        );
+      }
+      await scanAndIndex(fullPath, baseDir);
+    } else if (stat.isFile() && item.endsWith('.md')) {
+      const title = item.replace(/\.md$/, '');
+      const parentPath = normalizePath(dirname(relPath)) === '.' ? '' : normalizePath(dirname(relPath));
+      const content = fs.readFileSync(fullPath, 'utf8');
+
+      const existing = await get('SELECT relative_path FROM notes WHERE relative_path = ?', [relPath]);
+      if (!existing) {
+        await run(
+          'INSERT INTO notes (relative_path, title, is_directory, parent_path, last_edited_by) VALUES (?, ?, ?, ?, ?)',
+          [relPath, title, 0, parentPath, 'Внешняя система']
+        );
+        await run(
+          'INSERT INTO versions (relative_path, content, author_name) VALUES (?, ?, ?)',
+          [relPath, content, 'Внешняя система']
+        );
+      } else {
+        // Update database if file content has changed from the latest indexed version
+        const lastVersion = await get('SELECT content FROM versions WHERE relative_path = ? ORDER BY id DESC LIMIT 1', [relPath]);
+        if (!lastVersion || lastVersion.content !== content) {
+          await run(
+            'INSERT INTO versions (relative_path, content, author_name) VALUES (?, ?, ?)',
+            [relPath, content, 'Внешняя система']
+          );
+          await run(
+            'UPDATE notes SET updated_at = CURRENT_TIMESTAMP, last_edited_by = ? WHERE relative_path = ?',
+            ['Внешняя система', relPath]
+          );
+        }
+      }
+    }
+  }
+};
+
+// 7.5. Import Entire Vault from ZIP (Admin only)
+router.post('/import', authenticateJWT, canEdit, async (req, res) => {
+  if (req.user.role !== 'Admin') {
+    return res.status(403).json({ error: 'Permission denied: Admins only' });
+  }
+
+  const { overwrite } = req.query;
+
+  try {
+    if (!req.body || !(req.body instanceof Buffer)) {
+      return res.status(400).json({ error: 'Valid binary ZIP file is required in request body' });
+    }
+
+    // 1. If overwrite is true, delete existing markdown files/folders on disk and clear DB tables
+    if (overwrite === 'true') {
+      console.log('[Import] Clearing current markdown files for overwrite...');
+      clearVaultMarkdown(vaultPath);
+      await run('DELETE FROM notes');
+      await run('DELETE FROM versions');
+      await run('DELETE FROM locks');
+    }
+
+    // 2. Extract ZIP archive in-memory using adm-zip
+    console.log('[Import] Extracting ZIP archive to vault...');
+    const zip = new AdmZip(req.body);
+    zip.extractAllTo(vaultPath, true);
+
+    // 3. Scan and reindex vault files into SQLite
+    console.log('[Import] Scanning and reindexing vault files...');
+    await scanAndIndex(vaultPath);
+
+    // 4. Notify all active sockets about the vault reload
+    req.app.get('io').emit('vault-reload');
+
+    res.json({ message: 'Vault imported and indexed successfully' });
+  } catch (err) {
+    console.error('Vault import error:', err);
+    res.status(500).json({ error: 'Failed to import vault ZIP archive' });
+  }
+});
+
+// 7.6. Upload Single MD File
+router.post('/upload-md', authenticateJWT, canEdit, async (req, res) => {
+  const relPath = req.query.relative_path;
+  if (!relPath) {
+    return res.status(400).json({ error: 'relative_path query parameter is required' });
+  }
+
+  const illegalChars = /[\\:*?"<>|]/;
+  if (illegalChars.test(relPath)) {
+    return res.status(400).json({ error: 'Имя файла содержит запрещенные символы' });
+  }
+
+  const absolutePath = join(vaultPath, relPath);
+  const parentDir = dirname(absolutePath);
+
+  try {
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    const content = req.body || '';
+    fs.writeFileSync(absolutePath, content, 'utf8');
+
+    const title = basename(relPath, '.md');
+    const dbParentPath = normalizePath(dirname(relPath)) === '.' ? '' : normalizePath(dirname(relPath));
+
+    const existingNote = await get('SELECT * FROM notes WHERE relative_path = ?', [relPath]);
+    if (!existingNote) {
+      await run(
+        'INSERT INTO notes (relative_path, title, is_directory, parent_path, last_edited_by) VALUES (?, ?, ?, ?, ?)',
+        [relPath, title, 0, dbParentPath, req.user.username]
+      );
+      await run(
+        'INSERT INTO versions (relative_path, content, author_name) VALUES (?, ?, ?)',
+        [relPath, content, req.user.username]
+      );
+      req.app.get('io').emit('file-create', { relative_path: relPath, title, is_directory: false, parent_path: dbParentPath });
+    } else {
+      await run(
+        'INSERT INTO versions (relative_path, content, author_name) VALUES (?, ?, ?)',
+        [relPath, content, req.user.username]
+      );
+      await run(
+        'UPDATE notes SET updated_at = CURRENT_TIMESTAMP, last_edited_by = ? WHERE relative_path = ?',
+        [req.user.username, relPath]
+      );
+      req.app.get('io').emit('file-update', { relative_path: relPath, content });
+    }
+
+    res.json({ message: 'File uploaded successfully', relative_path: relPath });
+  } catch (err) {
+    console.error('Error uploading md file:', err);
+    res.status(500).json({ error: 'Failed to upload md file' });
+  }
 });
 
 export default router;

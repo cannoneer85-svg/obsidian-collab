@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Folder, FolderOpen, FileText, Plus, FolderPlus, Download, 
-  Search, LogOut, Users, ChevronRight, ChevronDown, Trash2, Edit2
+  Search, LogOut, Users, ChevronRight, ChevronDown, Trash2, Edit2, Settings
 } from 'lucide-react';
 
 interface Note {
@@ -28,6 +28,9 @@ interface SidebarProps {
   currentUser: { username: string; role: string };
   onLogout: () => void;
   onExport: () => void;
+  selectedParentFolder: string;
+  onSelectedParentFolderChange: (folder: string) => void;
+  onOpenSettings?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -40,11 +43,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeUsers,
   currentUser,
   onLogout,
-  onExport
+  onExport,
+  selectedParentFolder,
+  onSelectedParentFolderChange,
+  onOpenSettings
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
-  const [selectedParentFolder, setSelectedParentFolder] = useState<string>(''); // Currently selected target folder for new creations
 
   // Auto-expand all parent folders when the active note changes
   useEffect(() => {
@@ -178,7 +183,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <li key={item.relative_path} className="group/dir">
                 <div
                   onClick={() => {
-                    setSelectedParentFolder(item.relative_path);
+                    onSelectedParentFolderChange(item.relative_path);
                     setExpandedFolders(prev => ({
                       ...prev,
                       [item.relative_path]: !prev[item.relative_path]
@@ -289,13 +294,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
         
-        <button
-          onClick={onLogout}
-          className="p-1.5 hover:bg-white/5 hover:text-red-400 text-text-disabled rounded-lg transition-colors cursor-pointer"
-          title="Выйти"
-        >
-          <LogOut className="w-4 h-4" />
-        </button>
+        <div className="flex items-center space-x-1.5">
+          {currentUser.role === 'Admin' && onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="p-1.5 hover:bg-white/5 hover:text-primary text-text-disabled rounded-lg transition-colors cursor-pointer"
+              title="Настройки"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            onClick={onLogout}
+            className="p-1.5 hover:bg-white/5 hover:text-red-400 text-text-disabled rounded-lg transition-colors cursor-pointer"
+            title="Выйти"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Creation Tools */}
@@ -353,7 +369,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             {selectedParentFolder && (
               <button 
-                onClick={() => setSelectedParentFolder('')}
+                onClick={() => onSelectedParentFolderChange('')}
                 className="text-primary hover:underline hover:text-white cursor-pointer border-l border-white/10 pl-2 ml-1"
                 title="Сбросить выбор папки на Корень"
               >

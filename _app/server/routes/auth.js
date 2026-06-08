@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { run, get } from '../db.js';
+import { run, get, all } from '../db.js';
 
 const router = express.Router();
 export const JWT_SECRET = 'obsidian-collaborative-secret-key-2026';
@@ -101,6 +101,65 @@ router.post('/login', async (req, res) => {
 // Validate token route
 router.get('/me', authenticateJWT, (req, res) => {
   res.json({ user: req.user });
+});
+
+// Admin Route: Get all users
+router.get('/users', authenticateJWT, async (req, res) => {
+  if (req.user.role !== 'Admin') {
+    return res.status(403).json({ error: 'Permission denied: Admins only' });
+  }
+  try {
+    const users = await all('SELECT id, username, role, created_at FROM users ORDER BY username ASC');
+    res.json(users);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Admin Route: Update user role
+router.put('/users/:id', authenticateJWT, async (req, res) => {
+  if (req.user.role !== 'Admin') {
+    return res.status(403).json({ error: 'Permission denied: Admins only' });
+  }
+  const { role } = req.body;
+  const userId = req.params.id;
+
+  if (!role || !['Admin', 'Editor', 'Viewer'].includes(role)) {
+    return res.status(400).json({ error: 'Valid role is required (Admin, Editor, Viewer)' });
+  }
+
+  if (parseInt(userId) === req.user.id) {
+    return res.status(400).json({ error: 'You cannot change your own role to prevent lockout' });
+  }
+
+  try {
+    await run('UPDATE users SET role = ? WHERE id = ?', [role, userId]);
+    res.json({ message: 'User role updated successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update user role' });
+  }
+});
+
+// Admin Route: Delete user
+router.delete('/users/:id', authenticateJWT, async (req, res) => {
+  if (req.user.role !== 'Admin') {
+    return res.status(403).json({ error: 'Permission denied: Admins only' });
+  }
+  const userId = req.params.id;
+
+  if (parseInt(userId) === req.user.id) {
+    return res.status(400).json({ error: 'You cannot delete your own admin account' });
+  }
+
+  try {
+    await run('DELETE FROM users WHERE id = ?', [userId]);
+    res.json({ message: 'User deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
 });
 
 export default router;
