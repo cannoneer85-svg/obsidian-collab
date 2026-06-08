@@ -5,6 +5,13 @@ import {
   Heading1, Heading2, Heading3, Bold, Italic, List, CheckSquare, 
   Link as LinkIcon, Image as ImageIcon, Eye, Code, Save, FileLock, User
 } from 'lucide-react';
+import mermaid from 'mermaid';
+
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  securityLevel: 'loose',
+});
 
 interface Note {
   relative_path: string;
@@ -84,6 +91,20 @@ export const Editor: React.FC<EditorProps> = ({
     }, 10000);
     return () => clearInterval(timer);
   }, [content, initialContent, isReadOnly, lockedBy, saving]);
+
+  // Render Mermaid diagrams on preview mode change or content update
+  useEffect(() => {
+    if (mode === 'preview') {
+      const timer = setTimeout(() => {
+        try {
+          mermaid.run();
+        } catch (err) {
+          console.error('Mermaid render error:', err);
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [mode, content]);
 
   const handleSave = async () => {
     if (isReadOnly || lockedBy || saving) return;
@@ -174,10 +195,13 @@ export const Editor: React.FC<EditorProps> = ({
       .replace(/^\s*[-*+]\s+\[\s*\]\s+(.*?)$/gm, '<div class="flex items-center space-x-2 my-1"><input type="checkbox" disabled class="rounded bg-black/40 border-white/10 text-primary focus:ring-0" /> <span class="text-text-muted">$1</span></div>')
       .replace(/^\s*[-*+]\s+\[x\]\s+(.*?)$/gm, '<div class="flex items-center space-x-2 my-1"><input type="checkbox" checked disabled class="rounded bg-black/40 border-white/10 text-primary focus:ring-0" /> <span class="line-through text-text-disabled">$1</span></div>')
       .replace(/^\s*[-*+]\s+(.*?)$/gm, '<li class="list-disc list-inside ml-4 text-text">$1</li>')
+      // Ordered Lists
+      .replace(/^\s*(\d+)\.\s+(.*?)$/gm, '<li class="list-decimal list-inside ml-4 text-text" value="$1">$2</li>')
       // Bold & Italic
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      // Code blocks
+      // Code blocks & Mermaid diagrams
+      .replace(/```mermaid\s*([\s\S]*?)```/g, '<div class="mermaid">$1</div>')
       .replace(/```([\s\S]*?)```/g, '<pre class="bg-black/30 p-3 rounded-lg border border-white/5 font-mono text-xs overflow-x-auto my-2">$1</pre>')
       .replace(/`([^`]+)`/g, '<code class="bg-white/5 px-1 py-0.5 rounded font-mono text-xs text-primary">$1</code>')
       // Standard Images

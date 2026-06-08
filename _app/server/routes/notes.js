@@ -403,7 +403,15 @@ const scanAndIndex = async (dir, baseDir = vaultPath) => {
     const fullPath = join(dir, item);
     const relPath = normalizePath(relative(baseDir, fullPath));
 
-    if (item.startsWith('.') || relPath === '_app' || relPath === 'assets' || relPath.startsWith('_app/') || relPath.startsWith('assets/')) {
+    if (
+      item.startsWith('.') ||
+      relPath === '_app' ||
+      relPath === 'assets' ||
+      relPath === 'node_modules' ||
+      relPath.startsWith('_app/') ||
+      relPath.startsWith('assets/') ||
+      relPath.startsWith('node_modules/')
+    ) {
       continue;
     }
 

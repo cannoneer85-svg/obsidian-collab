@@ -150,6 +150,9 @@ const startServer = async () => {
     // 1. Initialize SQLite
     await initDb();
 
+    // Prune node_modules if they accidentally slipped into notes database
+    await run("DELETE FROM notes WHERE relative_path = 'node_modules' OR relative_path LIKE 'node_modules/%'");
+
     // 2. Start Chokidar watcher (watches files and handles live SQLite / Socket sync)
     initWatcher(io);
 
