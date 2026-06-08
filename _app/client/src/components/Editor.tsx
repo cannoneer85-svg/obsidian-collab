@@ -171,9 +171,9 @@ export const Editor: React.FC<EditorProps> = ({
       // Blockquotes
       .replace(/^> (.*?)$/gm, '<blockquote class="visual-blockquote">$1</blockquote>')
       // Unordered Lists
-      .replace(/^\s*-\s+\[\s*\]\s+(.*?)$/gm, '<div class="flex items-center space-x-2 my-1"><input type="checkbox" disabled class="rounded bg-black/40 border-white/10 text-primary focus:ring-0" /> <span class="text-text-muted">$1</span></div>')
-      .replace(/^\s*-\s+\[x\]\s+(.*?)$/gm, '<div class="flex items-center space-x-2 my-1"><input type="checkbox" checked disabled class="rounded bg-black/40 border-white/10 text-primary focus:ring-0" /> <span class="line-through text-text-disabled">$1</span></div>')
-      .replace(/^\s*-\s+(.*?)$/gm, '<li class="list-disc list-inside ml-4 text-text">$1</li>')
+      .replace(/^\s*[-*+]\s+\[\s*\]\s+(.*?)$/gm, '<div class="flex items-center space-x-2 my-1"><input type="checkbox" disabled class="rounded bg-black/40 border-white/10 text-primary focus:ring-0" /> <span class="text-text-muted">$1</span></div>')
+      .replace(/^\s*[-*+]\s+\[x\]\s+(.*?)$/gm, '<div class="flex items-center space-x-2 my-1"><input type="checkbox" checked disabled class="rounded bg-black/40 border-white/10 text-primary focus:ring-0" /> <span class="line-through text-text-disabled">$1</span></div>')
+      .replace(/^\s*[-*+]\s+(.*?)$/gm, '<li class="list-disc list-inside ml-4 text-text">$1</li>')
       // Bold & Italic
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
