@@ -201,7 +201,14 @@ export const Editor: React.FC<EditorProps> = ({
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
       // Code blocks & Mermaid diagrams
-      .replace(/```mermaid\s*([\s\S]*?)```/g, '<div class="mermaid">$1</div>')
+      .replace(/```mermaid\s*([\s\S]*?)```/g, (_match, code) => {
+        const rawCode = code
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/<--->/g, '<-->');
+        return `<div class="mermaid">${rawCode}</div>`;
+      })
       .replace(/```([\s\S]*?)```/g, '<pre class="bg-black/30 p-3 rounded-lg border border-white/5 font-mono text-xs overflow-x-auto my-2">$1</pre>')
       .replace(/`([^`]+)`/g, '<code class="bg-white/5 px-1 py-0.5 rounded font-mono text-xs text-primary">$1</code>')
       // Standard Images
