@@ -71,6 +71,10 @@ export default function App() {
         console.error('Error decoding hash navigation:', err);
       }
     };
+    
+    // Check initial hash on mount or when notes list is updated
+    handleHashChange();
+    
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, [notes]);
