@@ -559,7 +559,7 @@ export default function App() {
                       initialContent={noteContents[activeNotePath] || ''}
                       onSave={saveNote}
                       isReadOnly={currentUser.role === 'Viewer'}
-                      lockedBy={locks[activeNotePath] || null}
+                      lockedBy={locks[activeNotePath] && locks[activeNotePath] !== currentUser?.username ? locks[activeNotePath] : null}
                       currentUser={currentUser}
                       allNotes={notes}
                       socket={socket}

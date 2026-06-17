@@ -7,6 +7,12 @@ import {
 } from 'lucide-react';
 import mermaid from 'mermaid';
 
+console.log('Mermaid object:', mermaid);
+console.log('Mermaid keys:', Object.keys(mermaid));
+
+// @ts-ignore
+window.mermaid = mermaid;
+
 mermaid.initialize({
   startOnLoad: false,
   theme: 'dark',
@@ -62,6 +68,7 @@ export const Editor: React.FC<EditorProps> = ({
   }, [wikiSearch]);
   
   const editorRef = useRef<any>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
 
   // Sync state with prop updates
   useEffect(() => {
@@ -92,18 +99,82 @@ export const Editor: React.FC<EditorProps> = ({
     return () => clearInterval(timer);
   }, [content, initialContent, isReadOnly, lockedBy, saving]);
 
-  // Render Mermaid diagrams on preview mode change or content update
+  // Render Mermaid diagrams on preview mode change or content update, using MutationObserver to handle async React re-renders
   useEffect(() => {
-    if (mode === 'preview') {
-      const timer = setTimeout(() => {
-        try {
-          mermaid.run();
-        } catch (err) {
-          console.error('Mermaid render error:', err);
+    if (mode !== 'preview' || !previewRef.current) return;
+
+    let observer: MutationObserver | null = null;
+    let isRunning = false;
+
+    const renderMermaid = async () => {
+      if (isRunning) return;
+      
+      const allMermaid = previewRef.current?.querySelectorAll('.mermaid');
+      const unrendered = Array.from(allMermaid || []).filter(el => {
+        const status = el.getAttribute('data-processed');
+        if (status === 'true' || status === 'failed') return false;
+        if (el.closest('[data-processed="true"]')) return false;
+        return true;
+      });
+
+      if (unrendered.length > 0) {
+        isRunning = true;
+        
+        // Temporarily disconnect observer to avoid observing our own mutations
+        if (observer) {
+          observer.disconnect();
         }
-      }, 100);
-      return () => clearTimeout(timer);
+
+        try {
+          await mermaid.run({
+            querySelector: '.mermaid:not([data-processed="true"])',
+            suppressErrors: true
+          });
+        } catch (err: any) {
+          console.error('mermaid.run error:', err);
+        } finally {
+          // Safety fallback: mark any remaining unprocessed elements to avoid infinite loops
+          unrendered.forEach(el => {
+            if (!el.getAttribute('data-processed')) {
+              el.setAttribute('data-processed', 'failed');
+            }
+          });
+          isRunning = false;
+          
+          // Reconnect observer after a small delay to let the DOM settle
+          setTimeout(() => {
+            if (previewRef.current && observer) {
+              observer.observe(previewRef.current, {
+                childList: true,
+                subtree: true
+              });
+            }
+          }, 50);
+        }
+      }
+    };
+
+    // Set up observer
+    observer = new MutationObserver(() => {
+      renderMermaid();
+    });
+
+    // Run initially
+    renderMermaid();
+
+    // Start observing
+    if (previewRef.current) {
+      observer.observe(previewRef.current, {
+        childList: true,
+        subtree: true
+      });
     }
+
+    return () => {
+      if (observer) {
+        observer.disconnect();
+      }
+    };
   }, [mode, content]);
 
   const handleSave = async () => {
@@ -178,13 +249,108 @@ export const Editor: React.FC<EditorProps> = ({
     input.click();
   };
 
-  // Render HTML preview using Regex Markdown Parser
   const parseMarkdown = (md: string) => {
+    // 1. Escaping HTML to prevent XSS
     let html = md
-      // Escaping HTML to prevent XSS
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
+      .replace(/>/g, '&gt;');
+
+    // 2. Extract code blocks and mermaid diagrams into placeholders
+    const placeholders: string[] = [];
+    
+    // Extract mermaid first
+    html = html.replace(/```mermaid\s*([\s\S]*?)```/g, (_match, code) => {
+      let rawCode = code
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        // Normalize bidirectional arrows (handles em-dash, en-dash, minus, hyphens, and spaces)
+        .replace(/<\s*[\u2014\u2013\u2212-]+\s*>/g, '<-->')
+        // Normalize right-pointing arrows (excluding dotted links)
+        .replace(/(?<!\.)[\u2014\u2013\u2212-]+\s*>/g, '-->')
+        .replace(/\bgraph\b/g, 'flowchart');
+
+      // Fix subgraph IDs with spaces
+      // 1. With labels: subgraph ID [Label] -> subgraph ID_with_underscores ["Label"]
+      rawCode = rawCode.replace(/subgraph\s+([^[\n]+?)\s*\[(.*?)\]/g, (_m: string, id: string, label: string) => {
+        const cleanId = id.trim().replace(/\s+/g, '_');
+        let cleanLabel = label.trim();
+        if ((cleanLabel.startsWith('"') && cleanLabel.endsWith('"')) || 
+            (cleanLabel.startsWith("'") && cleanLabel.endsWith("'"))) {
+          cleanLabel = cleanLabel.slice(1, -1);
+        }
+        return `subgraph ${cleanId} ["${cleanLabel}"]`;
+      });
+
+      // 2. Without labels: subgraph ID -> subgraph ID_with_underscores
+      rawCode = rawCode.replace(/subgraph\s+([^[\n]+)$/gm, (m: string, id: string) => {
+        const trimmedId = id.trim();
+        if (trimmedId.includes('"') || trimmedId.includes('[')) return m;
+        const cleanId = trimmedId.replace(/\s+/g, '_');
+        return `subgraph ${cleanId}`;
+      });
+
+      // 3. Wrap node labels in quotes to support slashes and special characters
+      rawCode = rawCode.replace(/([a-zA-Z0-9_-]+)\[(.*?)\]/g, (_m: string, id: string, content: string) => {
+        let cleanContent = content.trim();
+        if (cleanContent.startsWith('(') && cleanContent.endsWith(')')) {
+          let dbText = cleanContent.slice(1, -1).trim();
+          if (!dbText.startsWith('"')) {
+            dbText = `"${dbText}"`;
+          }
+          return `${id}[(${dbText})]`;
+        }
+        if (!cleanContent.startsWith('"')) {
+          cleanContent = `"${cleanContent}"`;
+        }
+        return `${id}[${cleanContent}]`;
+      });
+
+      // 4. Wrap round brackets node labels in quotes
+      rawCode = rawCode.replace(/([a-zA-Z0-9_-]+)\(([^)]+)\)/g, (m: string, id: string, content: string) => {
+        if (id === 'subgraph') return m;
+        let cleanContent = content.trim();
+        if (!cleanContent.startsWith('"')) {
+          cleanContent = `"${cleanContent}"`;
+        }
+        return `${id}(${cleanContent})`;
+      });
+
+      // 5. Wrap edge labels in quotes to support slashes
+      rawCode = rawCode.replace(/\|(.*?)\|/g, (_m: string, text: string) => {
+        let cleanText = text.trim();
+        if (!cleanText.startsWith('"')) {
+          cleanText = `"${cleanText}"`;
+        }
+        return `|${cleanText}|`;
+      });
+
+      const placeholder = `<!--PLACEHOLDER_${placeholders.length}-->`;
+      const escapedCode = rawCode
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      placeholders.push(`<div class="mermaid">${escapedCode}</div>`);
+      return placeholder;
+    });
+
+    // Extract other code blocks
+    html = html.replace(/```([\s\S]*?)```/g, (_match, code) => {
+      const placeholder = `<!--PLACEHOLDER_${placeholders.length}-->`;
+      placeholders.push(`<pre class="bg-black/30 p-3 rounded-lg border border-white/5 font-mono text-xs overflow-x-auto my-2">${code}</pre>`);
+      return placeholder;
+    });
+
+    // Extract inline code
+    html = html.replace(/`([^`]+)`/g, (_match, code) => {
+      const placeholder = `<!--PLACEHOLDER_${placeholders.length}-->`;
+      placeholders.push(`<code class="bg-white/5 px-1 py-0.5 rounded font-mono text-xs text-primary">${code}</code>`);
+      return placeholder;
+    });
+
+    // 3. Apply standard markdown replacements on the remaining text
+    html = html
       // Headers
       .replace(/^# (.*?)$/gm, '<h1 class="visual-h1">$1</h1>')
       .replace(/^## (.*?)$/gm, '<h2 class="visual-h2">$1</h2>')
@@ -200,40 +366,6 @@ export const Editor: React.FC<EditorProps> = ({
       // Bold & Italic
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      // Code blocks & Mermaid diagrams
-      .replace(/```mermaid\s*([\s\S]*?)```/g, (_match, code) => {
-        let rawCode = code
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&amp;/g, '&')
-          .replace(/<--->/g, '<-->')
-          .replace(/--->/g, '-->')
-          .replace(/\bgraph\b/g, 'flowchart');
-
-        // Fix subgraph IDs with spaces
-        // 1. With labels: subgraph ID [Label] -> subgraph ID_with_underscores ["Label"]
-        rawCode = rawCode.replace(/subgraph\s+([^[\n]+?)\s*\[(.*?)\]/g, (_m: string, id: string, label: string) => {
-          const cleanId = id.trim().replace(/\s+/g, '_');
-          let cleanLabel = label.trim();
-          if ((cleanLabel.startsWith('"') && cleanLabel.endsWith('"')) || 
-              (cleanLabel.startsWith("'") && cleanLabel.endsWith("'"))) {
-            cleanLabel = cleanLabel.slice(1, -1);
-          }
-          return `subgraph ${cleanId} ["${cleanLabel}"]`;
-        });
-
-        // 2. Without labels: subgraph ID -> subgraph ID_with_underscores
-        rawCode = rawCode.replace(/subgraph\s+([^[\n]+)$/gm, (m: string, id: string) => {
-          const trimmedId = id.trim();
-          if (trimmedId.includes('"') || trimmedId.includes('[')) return m;
-          const cleanId = trimmedId.replace(/\s+/g, '_');
-          return `subgraph ${cleanId}`;
-        });
-
-        return `<div class="mermaid">${rawCode}</div>`;
-      })
-      .replace(/```([\s\S]*?)```/g, '<pre class="bg-black/30 p-3 rounded-lg border border-white/5 font-mono text-xs overflow-x-auto my-2">$1</pre>')
-      .replace(/`([^`]+)`/g, '<code class="bg-white/5 px-1 py-0.5 rounded font-mono text-xs text-primary">$1</code>')
       // Standard Images
       .replace(/!\[(.*?)\]\((.*?)\)/g, '<div class="my-3"><img src="/$2" alt="$1" class="max-w-full max-h-96 rounded-lg border border-white/10 shadow-lg object-contain" /><span class="text-[10px] text-text-disabled italic">$1</span></div>')
       // Standard links
@@ -247,7 +379,14 @@ export const Editor: React.FC<EditorProps> = ({
       // Paragraph line breaks
       .replace(/\n\n/g, '</p><p>');
 
-    return `<p>${html}</p>`;
+    html = `<p>${html}</p>`;
+
+    // 4. Restore code and mermaid blocks from placeholders
+    for (let i = 0; i < placeholders.length; i++) {
+      html = html.replace(`<!--PLACEHOLDER_${i}-->`, placeholders[i]);
+    }
+
+    return html;
   };
 
   // Handle WikiLink click inside HTML preview
@@ -579,6 +718,7 @@ export const Editor: React.FC<EditorProps> = ({
           </div>
         ) : (
           <div 
+            ref={previewRef}
             onClick={handlePreviewClick}
             className="w-full h-full p-8 overflow-y-auto markdown-preview text-text select-text text-left prose prose-invert"
             dangerouslySetInnerHTML={{ __html: parseMarkdown(content) }}
