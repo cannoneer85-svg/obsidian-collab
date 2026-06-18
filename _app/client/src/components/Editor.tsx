@@ -57,6 +57,7 @@ export const Editor: React.FC<EditorProps> = ({
     setPrevInitialContent(initialContent);
     setContent(initialContent);
   }
+  const [renderedDiagrams, setRenderedDiagrams] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [wikiDropdownOpen, setWikiDropdownOpen] = useState(false);
   const [wikiSearch, setWikiSearch] = useState('');
@@ -134,24 +135,26 @@ export const Editor: React.FC<EditorProps> = ({
           observer.disconnect();
         }
 
+        const newRendered: Record<string, string> = {};
         try {
           console.log('[Mermaid Debug] Running manual mermaid.render loop with', unrendered.length, 'elements.');
           for (let i = 0; i < unrendered.length; i++) {
             const el = unrendered[i] as HTMLElement;
             const code = el.textContent || '';
             const uniqueId = `mermaid-svg-${Math.random().toString(36).substring(2, 11)}`;
-            console.log('[Mermaid Debug] Processing element', i, 'id:', uniqueId, 'code length:', code.length);
+            console.log('[Mermaid Debug] Processing element', i, 'id:', uniqueId);
             
             try {
               const { svg } = await mermaid.render(uniqueId, code);
               console.log('[Mermaid Debug] mermaid.render succeeded for', uniqueId);
-              el.innerHTML = svg;
-              el.setAttribute('data-processed', 'true');
-              console.log('[Mermaid Debug] HTML and data-processed set for', uniqueId, 'el has attribute:', el.getAttribute('data-processed'));
+              newRendered[code] = svg;
             } catch (err: any) {
               console.error('[Mermaid Debug] Individual mermaid.render error:', err);
-              el.setAttribute('data-processed', 'failed');
+              newRendered[code] = 'failed';
             }
+          }
+          if (Object.keys(newRendered).length > 0) {
+            setRenderedDiagrams(prev => ({ ...prev, ...newRendered }));
           }
           console.log('[Mermaid Debug] Manual mermaid.render completed.');
         } catch (err: any) {
@@ -370,7 +373,15 @@ export const Editor: React.FC<EditorProps> = ({
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
-      placeholders.push(`<div class="mermaid">${escapedCode}</div>`);
+      if (renderedDiagrams[rawCode]) {
+        if (renderedDiagrams[rawCode] === 'failed') {
+          placeholders.push(`<div class="mermaid" data-processed="failed">${escapedCode}</div>`);
+        } else {
+          placeholders.push(`<div class="mermaid" data-processed="true">${renderedDiagrams[rawCode]}</div>`);
+        }
+      } else {
+        placeholders.push(`<div class="mermaid">${escapedCode}</div>`);
+      }
       return placeholder;
     });
 
