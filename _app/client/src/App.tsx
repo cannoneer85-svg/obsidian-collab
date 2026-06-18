@@ -58,6 +58,7 @@ export default function App() {
   const [historyList, setHistoryList] = useState<HistoryItem[]>([]);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<HistoryItem | null>(null);
   const [historicContent, setHistoricContent] = useState<string>('');
+  const [previousContent, setPreviousContent] = useState<string>('');
 
   // Auto hash navigation for external link clicks
   useEffect(() => {
@@ -397,6 +398,7 @@ export default function App() {
       if (res.ok) {
         setSelectedHistoryItem(item);
         setHistoricContent(data.content);
+        setPreviousContent(data.previousContent || '');
       }
     } catch (err) {
       console.error(err);
@@ -551,8 +553,8 @@ export default function App() {
                       versionId={selectedHistoryItem.id}
                       versionDate={selectedHistoryItem.created_at}
                       authorName={selectedHistoryItem.author_name}
-                      historicContent={historicContent}
-                      currentContent={noteContents[activeNotePath] || ''}
+                      historicContent={previousContent}
+                      currentContent={historicContent}
                       onClose={() => setSelectedHistoryItem(null)}
                       onRestore={handleRestoreHistory}
                       isReadOnly={currentUser.role === 'Viewer'}

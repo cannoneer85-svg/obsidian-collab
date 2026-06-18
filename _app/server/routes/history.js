@@ -27,11 +27,21 @@ router.get('/version', authenticateJWT, async (req, res) => {
   if (!id) return res.status(400).json({ error: 'version id is required' });
 
   try {
-    const version = await get('SELECT content FROM versions WHERE id = ?', [id]);
+    const version = await get('SELECT relative_path, content FROM versions WHERE id = ?', [id]);
     if (!version) {
       return res.status(404).json({ error: 'Version not found' });
     }
-    res.json(version);
+
+    // Find the previous version content of the same file
+    const prevVersion = await get(
+      'SELECT content FROM versions WHERE relative_path = ? AND id < ? ORDER BY id DESC LIMIT 1',
+      [version.relative_path, id]
+    );
+
+    res.json({
+      content: version.content,
+      previousContent: prevVersion ? prevVersion.content : ''
+    });
   } catch (err) {
     console.error(`Error retrieving version content for id ${id}:`, err);
     res.status(500).json({ error: 'Failed to retrieve version content' });
