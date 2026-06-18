@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { formatToMoscowTime } from '../utils/date';
 
 interface DiffViewerProps {
   versionId: number;
@@ -87,7 +88,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           <div>
             <h2 className="text-sm font-semibold text-white">Просмотр изменений</h2>
             <p className="text-xs text-text-muted">
-              Версия #{versionId} от {new Date(versionDate).toLocaleString()} ({authorName})
+              Версия #{versionId} от {formatToMoscowTime(versionDate)} ({authorName})
             </p>
           </div>
         </div>

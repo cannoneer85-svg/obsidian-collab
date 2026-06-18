@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Upload, UserPlus, Trash2, AlertTriangle, Check, Users, ShieldAlert, FolderOpen, Edit2 } from 'lucide-react';
+import { formatToMoscowTime } from '../utils/date';
 
 interface User {
   id: number;
@@ -626,7 +627,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                               {user.role}
                             </td>
                             <td className="px-5 py-3 text-[11px] text-text-muted">
-                              {new Date(user.created_at).toLocaleString()}
+                              {formatToMoscowTime(user.created_at)}
                             </td>
                             <td className="px-5 py-3">
                               {user.approved ? (

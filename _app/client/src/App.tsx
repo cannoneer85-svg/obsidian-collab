@@ -6,6 +6,7 @@ import { GraphView } from './components/GraphView';
 import { DiffViewer } from './components/DiffViewer';
 import { Auth } from './components/Auth';
 import { SettingsPanel } from './components/SettingsPanel';
+import { formatToMoscowTime } from './utils/date';
 import { 
   Network, FileText, History, X, HelpCircle
 } from 'lucide-react';
@@ -409,7 +410,7 @@ export default function App() {
   const handleRestoreHistory = async () => {
     if (!selectedHistoryItem || !activeNotePath) return;
 
-    if (confirm(`Вы действительно хотите восстановить версию от ${new Date(selectedHistoryItem.created_at).toLocaleString()}?`)) {
+    if (confirm(`Вы действительно хотите восстановить версию от ${formatToMoscowTime(selectedHistoryItem.created_at)}?`)) {
       await saveNote(historicContent);
       setHistoryOpen(false);
       setSelectedHistoryItem(null);
@@ -624,7 +625,7 @@ export default function App() {
                         </span>
                       </div>
                       <p className="text-[10px] text-text-muted">
-                        {new Date(item.created_at).toLocaleString()}
+                        {formatToMoscowTime(item.created_at)}
                       </p>
                     </div>
                   ))
