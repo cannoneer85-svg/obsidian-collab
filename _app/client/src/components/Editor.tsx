@@ -615,6 +615,84 @@ export const Editor: React.FC<EditorProps> = ({
       }
     };
 
+    const parseTables = (text: string): string => {
+      const lines = text.split('\n');
+      const result: string[] = [];
+      let inTable = false;
+      let tableHeaders: string[] = [];
+      let tableRows: string[][] = [];
+      let alignments: string[] = [];
+
+      const isDelimiterLine = (line: string): boolean => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        if (!trimmed.includes('|')) return false;
+        return /^[|\-\s:]+$/.test(trimmed);
+      };
+
+      const parseRow = (line: string): string[] => {
+        let trimmed = line.trim();
+        if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+        if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+        return trimmed.split('|').map(cell => cell.trim());
+      };
+
+      const getAlignments = (cells: string[]) => {
+        return cells.map(cell => {
+          const trimmed = cell.trim();
+          const left = trimmed.startsWith(':');
+          const right = trimmed.endsWith(':');
+          if (left && right) return 'center';
+          if (right) return 'right';
+          if (left) return 'left';
+          return '';
+        });
+      };
+
+      const renderTableHtml = (headers: string[], rows: string[][], aligns: string[]): string => {
+        const formatCell = (align: string) => align ? ` align="${align}" style="text-align: ${align};"` : '';
+        const headHtml = headers.map((h, idx) => `<th${formatCell(aligns[idx] || '')} class="border border-white/10 px-4 py-2 bg-white/5 font-semibold text-left">${h}</th>`).join('');
+        const rowsHtml = rows.map(row => {
+          const cellsHtml = row.map((cell, idx) => `<td${formatCell(aligns[idx] || '')} class="border border-white/10 px-4 py-2">${cell}</td>`).join('');
+          return `<tr class="hover:bg-white/[0.02] transition-colors">${cellsHtml}</tr>`;
+        }).join('');
+
+        return `<div class="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/20"><table class="w-full border-collapse text-xs text-left"><thead><tr class="border-b border-white/10">${headHtml}</tr></thead><tbody class="divide-y divide-white/5">${rowsHtml}</tbody></table></div>`;
+      };
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        if (!inTable) {
+          const nextLine = lines[i + 1];
+          if (trimmed.includes('|') && nextLine && isDelimiterLine(nextLine)) {
+            inTable = true;
+            tableHeaders = parseRow(line);
+            alignments = getAlignments(parseRow(nextLine));
+            tableRows = [];
+            i++; // skip the delimiter line
+          } else {
+            result.push(line);
+          }
+        } else {
+          if (trimmed === '' || !line.includes('|')) {
+            result.push(renderTableHtml(tableHeaders, tableRows, alignments));
+            inTable = false;
+            result.push(line);
+          } else {
+            tableRows.push(parseRow(line));
+          }
+        }
+      }
+
+      if (inTable) {
+        result.push(renderTableHtml(tableHeaders, tableRows, alignments));
+      }
+
+      return result.join('\n');
+    };
+
     // 1. Escaping HTML to prevent XSS
     let html = md
       .replace(/&/g, '&amp;')
@@ -721,6 +799,9 @@ export const Editor: React.FC<EditorProps> = ({
       placeholders.push(`<code class="bg-white/5 px-1 py-0.5 rounded font-mono text-xs text-primary">${code}</code>`);
       return placeholder;
     });
+
+    // 2.5. Parse markdown tables
+    html = parseTables(html);
 
     // 3. Apply standard markdown replacements on the remaining text
     html = html
