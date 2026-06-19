@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import CodeMirror, { EditorView } from '@uiw/react-codemirror';
+import { WidgetType, Decoration, ViewPlugin, ViewUpdate } from '@codemirror/view';
+import type { DecorationSet } from '@codemirror/view';
+import { Range } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { 
   Heading1, Heading2, Heading3, Bold, Italic, List, CheckSquare, 
@@ -17,6 +20,121 @@ mermaid.initialize({
   startOnLoad: false,
   theme: 'dark',
   securityLevel: 'loose',
+});
+
+class ImagePreviewWidget extends WidgetType {
+  url: string;
+  filename: string;
+
+  constructor(url: string, filename: string) {
+    super();
+    this.url = url;
+    this.filename = filename;
+  }
+
+  eq(other: ImagePreviewWidget) { return other.url === this.url; }
+
+  toDOM() {
+    const wrap = document.createElement("div");
+    wrap.className = "block my-2 p-1.5 bg-black/40 rounded-lg border border-white/10 select-none max-w-xs w-fit";
+    
+    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.m4v'];
+    const isVideo = videoExtensions.some(ext => this.url.toLowerCase().includes(ext));
+
+    if (isVideo) {
+      const video = document.createElement("video");
+      video.src = this.url;
+      video.controls = true;
+      video.preload = "metadata";
+      video.className = "max-w-full max-h-32 rounded-lg object-contain bg-black/20";
+      wrap.appendChild(video);
+    } else {
+      const img = document.createElement("img");
+      img.src = this.url;
+      img.alt = this.filename;
+      img.className = "max-w-full max-h-32 rounded-lg object-contain bg-black/20";
+      wrap.appendChild(img);
+    }
+
+    const label = document.createElement("div");
+    label.className = "text-[9px] text-white/40 italic mt-1 truncate max-w-[200px]";
+    label.textContent = this.filename;
+    wrap.appendChild(label);
+
+    return wrap;
+  }
+}
+
+const imagePreviewPlugin = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = this.getDecorations(view);
+  }
+
+  update(update: ViewUpdate) {
+    if (update.docChanged || update.viewportChanged) {
+      this.decorations = this.getDecorations(update.view);
+    }
+  }
+
+  getDecorations(view: EditorView) {
+    const deco: Range<Decoration>[] = [];
+    const doc = view.state.doc;
+    const token = localStorage.getItem('token') || '';
+
+    // Standard markdown image: !\[(.*?)\]\((.*?)\)
+    const mdRegex = /!\[(.*?)\]\((.*?)\)/g;
+    // Wiki-link embed: !\[\[(.*?)\]\]
+    const wikiRegex = /!\[\[(.*?)\]\]/g;
+
+    for (const { from, to } of view.visibleRanges) {
+      const text = doc.sliceString(from, to);
+      
+      let match;
+      while ((match = mdRegex.exec(text)) !== null) {
+        const [full, alt, path] = match;
+        const start = from + match.index;
+        const end = start + full.length;
+
+        if (/^https?:\/\//i.test(path)) {
+          deco.push(Decoration.widget({
+            widget: new ImagePreviewWidget(path, alt || path),
+            side: 1
+          }).range(end));
+        } else {
+          const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+          const mediaUrl = `/api/raw/${cleanPath}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+          deco.push(Decoration.widget({
+            widget: new ImagePreviewWidget(mediaUrl, alt || path),
+            side: 1
+          }).range(end));
+        }
+      }
+
+      while ((match = wikiRegex.exec(text)) !== null) {
+        const [full, content] = match;
+        const start = from + match.index;
+        const end = start + full.length;
+
+        const parts = content.split('|');
+        const filename = parts[0].trim();
+        const relativePath = `assets/${filename}`;
+        
+        const mediaUrl = `/api/raw/${relativePath}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+
+        deco.push(Decoration.widget({
+          widget: new ImagePreviewWidget(mediaUrl, filename),
+          side: 1
+        }).range(end));
+      }
+    }
+
+    deco.sort((a, b) => a.from - b.from);
+    return Decoration.set(deco, true);
+  }
+}, {
+  decorations: v => v.decorations
 });
 
 interface Note {
@@ -48,6 +166,7 @@ export const Editor: React.FC<EditorProps> = ({
 }) => {
   const [content, setContent] = useState(initialContent);
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [prevNotePath, setPrevNotePath] = useState(notePath);
   const [prevInitialContent, setPrevInitialContent] = useState(initialContent);
 
@@ -645,6 +764,16 @@ export const Editor: React.FC<EditorProps> = ({
   // Handle WikiLink click inside HTML preview
   const handlePreviewClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+    
+    // Lightbox image zoom support
+    if (target.tagName === 'IMG') {
+      const src = target.getAttribute('src');
+      if (src) {
+        setLightboxSrc(src);
+        return;
+      }
+    }
+
     const wikilink = target.getAttribute('data-wikilink');
     if (wikilink) {
       e.preventDefault();
@@ -961,7 +1090,7 @@ export const Editor: React.FC<EditorProps> = ({
               ref={editorRef}
               value={content}
               height="100%"
-              extensions={[markdown({ base: markdownLanguage }), EditorView.lineWrapping, mediaEvents]}
+              extensions={[markdown({ base: markdownLanguage }), EditorView.lineWrapping, mediaEvents, imagePreviewPlugin]}
               theme="dark" // UIW standard dark theme
               editable={!isReadOnly && !lockedBy}
               onChange={handleEditorChange}
@@ -984,6 +1113,27 @@ export const Editor: React.FC<EditorProps> = ({
         <span>Путь: {notePath}</span>
         <span>Символов: {content.length} | Строк: {content.split('\n').length}</span>
       </div>
+
+      {lightboxSrc && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm cursor-zoom-out select-none transition-opacity duration-300"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <img 
+            src={lightboxSrc} 
+            alt="Enlarged Preview" 
+            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl border border-white/10 object-contain animate-in fade-in zoom-in-95 duration-200"
+          />
+          <button 
+            className="absolute top-4 right-4 text-white/50 hover:text-white p-2 hover:bg-white/10 rounded-full transition-colors cursor-pointer"
+            onClick={() => setLightboxSrc(null)}
+          >
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   );
 };
