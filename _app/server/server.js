@@ -30,7 +30,7 @@ app.set('io', io);
 // Middlewares
 app.use(cors());
 app.use(express.json({ limit: '50mb' })); // Support larger base64 image uploads
-app.use(express.raw({ type: 'application/zip', limit: '100mb' })); // Support binary ZIP uploads
+app.use(express.raw({ type: 'application/zip', limit: '1000mb' })); // Support binary ZIP uploads
 app.use(express.text({ type: 'text/markdown', limit: '10mb' })); // Support raw markdown uploads
 
 // Create Assets Folder in vault if missing

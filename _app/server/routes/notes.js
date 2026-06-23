@@ -1,6 +1,7 @@
 import express from 'express';
 import fs from 'fs';
 import { join, dirname, basename, relative, resolve, extname } from 'path';
+import { fileURLToPath } from 'url';
 import archiver from 'archiver';
 import AdmZip from 'adm-zip';
 import { run, get, all } from '../db.js';
@@ -8,6 +9,24 @@ import { vaultPath } from '../watcher.js';
 import { authenticateJWT } from './auth.js';
 
 const router = express.Router();
+
+// Define and clear/create temp directory for chunked uploads
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const tempDir = resolve(__dirname, '../temp');
+
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir, { recursive: true });
+} else {
+  try {
+    const files = fs.readdirSync(tempDir);
+    for (const file of files) {
+      fs.unlinkSync(join(tempDir, file));
+    }
+    console.log('[Init] Cleared temporary import directory');
+  } catch (err) {
+    console.error('Failed to clear temp directory:', err);
+  }
+}
 
 // Helper to normalize path separators to forward slashes
 const normalizePath = (p) => p.replace(/\\/g, '/');
@@ -586,6 +605,141 @@ router.post('/import', authenticateJWT, canEdit, async (req, res) => {
     console.error('Vault import error:', err);
     res.status(500).json({ error: 'Failed to import vault ZIP archive' });
   }
+});
+
+// 7.5.5. Import Vault from ZIP in chunks (Admin only)
+router.post('/import-chunk', authenticateJWT, canEdit, (req, res) => {
+  if (req.user.role !== 'Admin') {
+    return res.status(403).json({ error: 'Permission denied: Admins only' });
+  }
+
+  const chunkIndex = parseInt(req.headers['x-chunk-index'], 10);
+  const totalChunks = parseInt(req.headers['x-total-chunks'], 10);
+  const uploadId = req.headers['x-upload-id'];
+  const overwrite = req.headers['x-overwrite'] === 'true';
+
+  if (isNaN(chunkIndex) || isNaN(totalChunks) || !uploadId) {
+    return res.status(400).json({ error: 'Missing required chunk headers' });
+  }
+
+  const partPath = join(tempDir, `${uploadId}.part_${chunkIndex}`);
+  const writeStream = fs.createWriteStream(partPath);
+
+  req.pipe(writeStream);
+
+  writeStream.on('finish', async () => {
+    try {
+      // Check if all chunks are uploaded
+      let allDone = true;
+      for (let i = 0; i < totalChunks; i++) {
+        if (!fs.existsSync(join(tempDir, `${uploadId}.part_${i}`))) {
+          allDone = false;
+          break;
+        }
+      }
+
+      if (allDone) {
+        console.log(`[Import] All ${totalChunks} chunks received. Merging...`);
+        const mergedZipPath = join(tempDir, `${uploadId}.zip`);
+
+        // Streaming merge function
+        const mergeChunks = () => {
+          return new Promise((resolvePromise, rejectPromise) => {
+            const finalWriteStream = fs.createWriteStream(mergedZipPath);
+            let currentChunk = 0;
+
+            function appendNext() {
+              if (currentChunk >= totalChunks) {
+                finalWriteStream.end();
+                return;
+              }
+
+              const chunkPath = join(tempDir, `${uploadId}.part_${currentChunk}`);
+              const readStream = fs.createReadStream(chunkPath);
+
+              readStream.pipe(finalWriteStream, { end: false });
+
+              readStream.on('end', () => {
+                try {
+                  fs.unlinkSync(chunkPath); // delete part file immediately
+                } catch (e) {
+                  console.error(`Failed to delete chunk file ${chunkPath}:`, e);
+                }
+                currentChunk++;
+                appendNext();
+              });
+
+              readStream.on('error', (err) => {
+                finalWriteStream.end();
+                rejectPromise(err);
+              });
+            }
+
+            finalWriteStream.on('finish', () => {
+              resolvePromise();
+            });
+
+            finalWriteStream.on('error', (err) => {
+              rejectPromise(err);
+            });
+
+            appendNext();
+          });
+        };
+
+        await mergeChunks();
+        console.log('[Import] Merge complete. Processing vault ZIP...');
+
+        try {
+          // 1. If overwrite is true, delete existing markdown files/folders on disk and clear DB tables
+          if (overwrite) {
+            console.log('[Import] Clearing current markdown files for overwrite...');
+            clearVaultMarkdown(vaultPath);
+            await run('DELETE FROM notes');
+            await run('DELETE FROM versions');
+            await run('DELETE FROM locks');
+          }
+
+          // 2. Extract ZIP archive using adm-zip
+          console.log('[Import] Extracting ZIP archive to vault...');
+          const zip = new AdmZip(mergedZipPath);
+          zip.extractAllTo(vaultPath, true);
+
+          // 3. Scan and reindex vault files into SQLite
+          console.log('[Import] Scanning and reindexing vault files...');
+          await scanAndIndex(vaultPath);
+
+          // 4. Clean up merged ZIP
+          if (fs.existsSync(mergedZipPath)) {
+            fs.unlinkSync(mergedZipPath);
+          }
+
+          // 5. Notify all active sockets about the vault reload
+          req.app.get('io').emit('vault-reload');
+
+          res.json({ message: 'Vault imported and indexed successfully' });
+        } catch (err) {
+          console.error('Vault import processing error:', err);
+          if (fs.existsSync(mergedZipPath)) {
+            try {
+              fs.unlinkSync(mergedZipPath);
+            } catch (e) {}
+          }
+          res.status(500).json({ error: 'Failed to extract and index vault ZIP archive' });
+        }
+      } else {
+        res.json({ success: true, message: `Chunk ${chunkIndex + 1}/${totalChunks} uploaded` });
+      }
+    } catch (err) {
+      console.error('Chunk completion error:', err);
+      res.status(500).json({ error: 'Failed to process chunk completion' });
+    }
+  });
+
+  writeStream.on('error', (err) => {
+    console.error('WriteStream error on chunk write:', err);
+    res.status(500).json({ error: 'Failed to save chunk file' });
+  });
 });
 
 // 7.6. Upload Single MD File

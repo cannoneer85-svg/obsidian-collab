@@ -35,6 +35,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [mdFile, setMdFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [uploadProgressBytes, setUploadProgressBytes] = useState<{ loaded: number; total: number } | null>(null);
 
   // User Management State
   const [users, setUsers] = useState<User[]>([]);
@@ -156,30 +158,101 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
 
     setUploading(true);
-    setUploadStatus({ type: 'info', message: 'Загрузка и распаковка архива...' });
+    setUploadProgress(0);
+    setUploadProgressBytes({ loaded: 0, total: zipFile.size });
+    setUploadStatus({ type: 'info', message: 'Подготовка к загрузке архива...' });
 
     try {
-      const fileBuffer = await zipFile.arrayBuffer();
-      const res = await fetch(`/api/notes/import?overwrite=${overwrite}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/zip',
-        },
-        body: fileBuffer,
-      });
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+      const totalSize = zipFile.size;
+      const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+      const uploadId = `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 
-      const data = await res.json();
-      if (res.ok) {
-        setUploadStatus({ type: 'success', message: 'Хранилище успешно импортировано!' });
-        setZipFile(null);
-        onVaultReload();
-      } else {
-        setUploadStatus({ type: 'error', message: data.error || 'Ошибка при импорте' });
+      let uploadedBytesPrevChunks = 0;
+
+      // Helper function to upload a single chunk using XHR
+      const uploadChunk = (
+        file: File,
+        start: number,
+        end: number,
+        chunkIndex: number
+      ): Promise<void> => {
+        return new Promise((resolvePromise, rejectPromise) => {
+          const xhr = new XMLHttpRequest();
+          const chunk = file.slice(start, end);
+
+          xhr.open('POST', '/api/notes/import-chunk', true);
+
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+          xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+          xhr.setRequestHeader('x-chunk-index', chunkIndex.toString());
+          xhr.setRequestHeader('x-total-chunks', totalChunks.toString());
+          xhr.setRequestHeader('x-upload-id', uploadId);
+          xhr.setRequestHeader('x-overwrite', overwrite ? 'true' : 'false');
+          xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));
+
+          xhr.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable) {
+              const currentLoaded = uploadedBytesPrevChunks + event.loaded;
+              const pct = Math.min(99, Math.round((currentLoaded / totalSize) * 100));
+              setUploadProgress(pct);
+              setUploadProgressBytes({ loaded: currentLoaded, total: totalSize });
+              setUploadStatus({
+                type: 'info',
+                message: `Загрузка архива: ${pct}% (${(currentLoaded / (1024 * 1024)).toFixed(1)} МБ из ${(totalSize / (1024 * 1024)).toFixed(1)} МБ)...`
+              });
+            }
+          });
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolvePromise();
+            } else {
+              try {
+                const res = JSON.parse(xhr.responseText);
+                rejectPromise(new Error(res.error || `Ошибка сервера: ${xhr.status}`));
+              } catch {
+                rejectPromise(new Error(`Ошибка сервера: ${xhr.status}`));
+              }
+            }
+          };
+
+          xhr.onerror = () => rejectPromise(new Error('Сетевой сбой при отправке части файла'));
+          xhr.onabort = () => rejectPromise(new Error('Загрузка прервана'));
+
+          xhr.send(chunk);
+        });
+      };
+
+      // Upload chunks sequentially
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, totalSize);
+
+        if (i === totalChunks - 1) {
+          // For the last chunk, update message in advance since server processing takes time
+          setUploadStatus({
+            type: 'info',
+            message: 'Загрузка завершена! Сервер распаковывает и индексирует файлы (это может занять некоторое время)...'
+          });
+        }
+
+        await uploadChunk(zipFile, start, end, i);
+        uploadedBytesPrevChunks += (end - start);
       }
-    } catch (err) {
+
+      // Success
+      setUploadProgress(100);
+      setUploadProgressBytes({ loaded: totalSize, total: totalSize });
+      setUploadStatus({ type: 'success', message: 'Хранилище успешно импортировано!' });
+      setZipFile(null);
+      onVaultReload();
+    } catch (err: any) {
       console.error(err);
-      setUploadStatus({ type: 'error', message: 'Ошибка сети при импорте архива' });
+      setUploadStatus({ 
+        type: 'error', 
+        message: err.message || 'Ошибка сети при импорте архива' 
+      });
     } finally {
       setUploading(false);
     }
@@ -436,6 +509,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       onChange={(e) => {
                         setUploadStatus(null);
                         setZipFile(e.target.files?.[0] || null);
+                        setUploadProgress(0);
+                        setUploadProgressBytes(null);
                       }}
                       className="hidden"
                       id="zip-upload-input"
@@ -482,6 +557,27 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       <span>
                         <strong>Режим слияния:</strong> новые файлы из архива будут добавлены, а существующие перезапишутся. Текущие заметки, которых нет в архиве, не пострадают.
                       </span>
+                    </div>
+                  )}
+
+                  {uploading && uploadProgressBytes && (
+                    <div className="space-y-2 bg-black/20 p-3 rounded-lg border border-white/5 animate-fade-in">
+                      <div className="flex justify-between text-[10.5px]">
+                        <span className="text-text-muted font-medium">
+                          {uploadProgress < 100 
+                            ? `Загрузка архива: ${uploadProgress}%` 
+                            : 'Распаковка и индексирование на сервере...'}
+                        </span>
+                        <span className="text-white font-semibold">
+                          {(uploadProgressBytes.loaded / (1024 * 1024)).toFixed(1)} МБ из {(uploadProgressBytes.total / (1024 * 1024)).toFixed(1)} МБ
+                        </span>
+                      </div>
+                      <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                        <div 
+                          className="bg-primary h-full rounded-full transition-all duration-300 shadow-[0_0_8px_rgba(147,51,234,0.5)]" 
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
                     </div>
                   )}
 
