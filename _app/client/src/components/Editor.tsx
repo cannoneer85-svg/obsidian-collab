@@ -822,102 +822,139 @@ export const Editor: React.FC<EditorProps> = ({
         .replace(/&lt;br\s*\/?&gt;/gi, '<br/>')
         .replace(/&lt;--&gt;/g, '<-->')
         .replace(/&lt;==&gt;/g, '<==>')
+        .replace(/&lt;\|--/g, '<|--')
+        .replace(/&lt;\|../g, '<|..')
+        .replace(/\.\.\|&gt;/g, '..|>')
+        .replace(/\.\.&gt;/g, '..>')
+        .replace(/--&gt;&gt;/g, '-->>')
+        .replace(/--&gt;/g, '-->')
+        .replace(/-&gt;&gt;/g, '->>')
+        .replace(/-&gt;/g, '->')
         .replace(/&lt;--/g, '<--')
         .replace(/&lt;==/g, '<==')
-        .replace(/--&gt;/g, '-->')
         .replace(/==&gt;/g, '==>')
         .replace(/-\.-&gt;/g, '-.->')
-        .replace(/-&gt;/g, '->')
         // Normalize bidirectional arrows (handles em-dash, en-dash, minus, hyphens, and spaces)
         .replace(/<\s*[\u2014\u2013\u2212-]+\s*>/g, '<-->')
         // Normalize right-pointing arrows (excluding dotted links)
         .replace(/(?<!\.)[\u2014\u2013\u2212-]+\s*>/g, '-->')
         .replace(/\bgraph\b/g, 'flowchart');
 
-      // Process line-by-line to avoid cross-matching subgraph lines with node/edge parsing rules
-      const lines = rawCode.split('\n');
-      const processedLines = lines.map((line: string) => {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('subgraph ')) {
-          // Extract the content after 'subgraph '
-          const content = trimmed.substring(9).trim();
-          
-          // Check if it already has a label in brackets, e.g. ID [Label] or ID ["Label"]
-          const bracketMatch = content.match(/^([^[]+)\s*\[(.*?)\]$/);
-          if (bracketMatch) {
-            const id = bracketMatch[1].trim();
-            const label = bracketMatch[2].trim();
-            const cleanId = id.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9\u0400-\u04FF_-]/g, '_');
-            let cleanLabel = label;
-            if ((cleanLabel.startsWith('"') && cleanLabel.endsWith('"')) || 
-                (cleanLabel.startsWith("'") && cleanLabel.endsWith("'"))) {
-              cleanLabel = cleanLabel.slice(1, -1);
+      // Process line-by-line only for flowcharts/graphs to avoid breaking other diagram types (e.g. erDiagram, sequenceDiagram)
+      const trimmedCode = rawCode.trim();
+      const isFlowchart = trimmedCode.startsWith('flowchart') || trimmedCode.startsWith('graph');
+
+      if (isFlowchart) {
+        const lines = rawCode.split('\n');
+        const processedLines = lines.map((line: string) => {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('subgraph ')) {
+            // Extract the content after 'subgraph '
+            const content = trimmed.substring(9).trim();
+            
+            // Check if it already has a label in brackets, e.g. ID [Label] or ID ["Label"]
+            const bracketMatch = content.match(/^([^[]+)\s*\[(.*?)\]$/);
+            if (bracketMatch) {
+              const id = bracketMatch[1].trim();
+              const label = bracketMatch[2].trim();
+              const cleanId = id.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9\u0400-\u04FF_-]/g, '_');
+              let cleanLabel = label;
+              if ((cleanLabel.startsWith('"') && cleanLabel.endsWith('"')) || 
+                  (cleanLabel.startsWith("'") && cleanLabel.endsWith("'"))) {
+                cleanLabel = cleanLabel.slice(1, -1);
+              }
+              cleanLabel = cleanLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              const indent = line.match(/^\s*/)?.[0] || '';
+              return `${indent}subgraph ${cleanId} ["${cleanLabel}"]`;
             }
-            cleanLabel = cleanLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            
+            // If no brackets, check if it's already in quotes
+            if ((content.startsWith('"') && content.endsWith('"')) ||
+                (content.startsWith("'") && content.endsWith("'"))) {
+              let cleanLabel = content.slice(1, -1);
+              cleanLabel = cleanLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              const indent = line.match(/^\s*/)?.[0] || '';
+              return `${indent}subgraph ${cleanLabel} ["${cleanLabel}"]`;
+            }
+            
+            // Otherwise, it's just 'subgraph Label' or 'subgraph ID'
+            const cleanId = content.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9\u0400-\u04FF_-]/g, '_');
+            const cleanLabel = content.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
             const indent = line.match(/^\s*/)?.[0] || '';
             return `${indent}subgraph ${cleanId} ["${cleanLabel}"]`;
-          }
-          
-          // If no brackets, check if it's already in quotes
-          if ((content.startsWith('"') && content.endsWith('"')) ||
-              (content.startsWith("'") && content.endsWith("'"))) {
-            let cleanLabel = content.slice(1, -1);
-            cleanLabel = cleanLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-            const indent = line.match(/^\s*/)?.[0] || '';
-            return `${indent}subgraph ${cleanLabel} ["${cleanLabel}"]`;
-          }
-          
-          // Otherwise, it's just 'subgraph Label' or 'subgraph ID'
-          const cleanId = content.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9\u0400-\u04FF_-]/g, '_');
-          const cleanLabel = content.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-          const indent = line.match(/^\s*/)?.[0] || '';
-          return `${indent}subgraph ${cleanId} ["${cleanLabel}"]`;
-        } else {
-          let processedLine = line;
-          
-          // 3. Wrap node labels in quotes to support slashes and special characters
-          processedLine = processedLine.replace(/([a-zA-Z0-9_-]+)\[(.*?)\]/g, (_m: string, id: string, content: string) => {
-            let cleanContent = content.trim();
-            if (cleanContent.startsWith('(') && cleanContent.endsWith(')')) {
-              let dbText = cleanContent.slice(1, -1).trim();
-              if (dbText.startsWith('"') && dbText.endsWith('"')) {
-                dbText = dbText.slice(1, -1);
+          } else {
+            let processedLine = line;
+            
+            // 3. Wrap node labels in quotes to support slashes and special characters
+            processedLine = processedLine.replace(/([a-zA-Z0-9_-]+)\[(.*?)\]/g, (_m: string, id: string, content: string) => {
+              let cleanContent = content.trim();
+              if (cleanContent.startsWith('(') && cleanContent.endsWith(')')) {
+                let dbText = cleanContent.slice(1, -1).trim();
+                if (dbText.startsWith('"') && dbText.endsWith('"')) {
+                  dbText = dbText.slice(1, -1);
+                }
+                dbText = dbText.replace(/\\/g, '\\\\');
+                return `${id}[("${dbText}")]`;
               }
-              dbText = dbText.replace(/\\/g, '\\\\');
-              return `${id}[("${dbText}")]`;
-            }
-            if (cleanContent.startsWith('"') && cleanContent.endsWith('"')) {
-              cleanContent = cleanContent.slice(1, -1);
-            }
-            cleanContent = cleanContent.replace(/\\/g, '\\\\');
-            return `${id}["${cleanContent}"]`;
-          });
+              if (cleanContent.startsWith('"') && cleanContent.endsWith('"')) {
+                cleanContent = cleanContent.slice(1, -1);
+              }
+              cleanContent = cleanContent.replace(/\\/g, '\\\\');
+              return `${id}["${cleanContent}"]`;
+            });
 
-          // 4. Wrap round brackets node labels in quotes
-          processedLine = processedLine.replace(/([a-zA-Z0-9_-]+)\(([^)]+)\)/g, (m: string, id: string, content: string) => {
-            if (id === 'subgraph') return m;
-            let cleanContent = content.trim();
-            if (cleanContent.startsWith('"') && cleanContent.endsWith('"')) {
-              cleanContent = cleanContent.slice(1, -1);
-            }
-            cleanContent = cleanContent.replace(/\\/g, '\\\\');
-            return `${id}("${cleanContent}")`;
-          });
+            // 4a. Wrap double round brackets node labels (circle nodes) in quotes
+            processedLine = processedLine.replace(/([a-zA-Z0-9_-]+)\(\(([^)]+)\)\)/g, (_m: string, id: string, content: string) => {
+              let cleanContent = content.trim();
+              if (cleanContent.startsWith('"') && cleanContent.endsWith('"')) {
+                cleanContent = cleanContent.slice(1, -1);
+              }
+              cleanContent = cleanContent.replace(/\\/g, '\\\\');
+              return `${id}(("${cleanContent}"))`;
+            });
 
-          // 5. Wrap edge labels in quotes to support slashes
-          processedLine = processedLine.replace(/\|(.*?)\|/g, (_m: string, text: string) => {
-            let cleanText = text.trim();
-            if (cleanText.startsWith('"') && cleanText.endsWith('"')) {
-              cleanText = cleanText.slice(1, -1);
-            }
-            cleanText = cleanText.replace(/\\/g, '\\\\');
-            return `|"${cleanText}"|`;
-          });
+            // 4b. Wrap oval shape node labels in quotes
+            processedLine = processedLine.replace(/([a-zA-Z0-9_-]+)\(\[([^\]]+)\]\)/g, (_m: string, id: string, content: string) => {
+              let cleanContent = content.trim();
+              if (cleanContent.startsWith('"') && cleanContent.endsWith('"')) {
+                cleanContent = cleanContent.slice(1, -1);
+              }
+              cleanContent = cleanContent.replace(/\\/g, '\\\\');
+              return `${id}(["${cleanContent}"])`;
+            });
 
-          return processedLine;
-        }
-      });
-      rawCode = processedLines.join('\n');
+            // 4c. Wrap single round brackets node labels in quotes
+            processedLine = processedLine.replace(/([a-zA-Z0-9_-]+)\((?!\(|\[)([^)]+)(?<!\]|\))\)/g, (m: string, id: string, content: string) => {
+              if (id === 'subgraph') return m;
+              let cleanContent = content.trim();
+              if (cleanContent.startsWith('"') && cleanContent.endsWith('"')) {
+                cleanContent = cleanContent.slice(1, -1);
+              }
+              cleanContent = cleanContent.replace(/\\/g, '\\\\');
+              return `${id}("${cleanContent}")`;
+            });
+
+            // 5. Wrap edge labels in quotes to support slashes
+            processedLine = processedLine.replace(/\|(.*?)\|/g, (_m: string, text: string) => {
+              let cleanText = text.trim();
+              if (cleanText.startsWith('"') && cleanText.endsWith('"')) {
+                cleanText = cleanText.slice(1, -1);
+              }
+              cleanText = cleanText.replace(/\\/g, '\\\\');
+              return `|"${cleanText}"|`;
+            });
+
+            return processedLine;
+          }
+        });
+        rawCode = processedLines.join('\n');
+      } else {
+        // For other diagram types (sequenceDiagram, erDiagram, etc.), restore all raw comparison and special operators
+        rawCode = rawCode
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&');
+      }
 
       const placeholder = `<!--PLACEHOLDER_${placeholders.length}-->`;
       const escapedCode = rawCode

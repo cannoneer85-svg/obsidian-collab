@@ -418,8 +418,8 @@ export default function App() {
   };
 
   // Export Zip vault download
-  const handleExportVault = () => {
-    window.open(`/api/notes/export?token=${token}`, '_blank');
+  const handleExportVault = (includeMD: boolean, includeAssets: boolean) => {
+    window.open(`/api/notes/export?token=${token}&includeMD=${includeMD}&includeAssets=${includeAssets}`, '_blank');
   };
 
   // Handle successful login

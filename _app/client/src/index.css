@@ -213,3 +213,19 @@
 .visual-callout-quote .visual-callout-header {
   color: #d1d5db;
 }
+
+/* Styled fallback for failed Mermaid diagrams */
+.mermaid[data-processed="failed"] {
+  white-space: pre-wrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.03);
+  border: 1px dashed rgba(239, 68, 68, 0.25);
+  padding: 1rem;
+  border-radius: 0.75rem;
+  margin: 1.25rem 0;
+  text-align: left;
+  line-height: 1.5;
+  box-shadow: inset 0 0 10px rgba(239, 68, 68, 0.02);
+}

@@ -442,7 +442,10 @@ router.get('/graph-data', authenticateJWT, async (req, res) => {
 
 // 7. Export Entire Vault as ZIP
 router.get('/export', authenticateJWT, (req, res) => {
-  console.log('[Export] Generating vault ZIP archive...');
+  const includeMD = req.query.includeMD !== 'false';
+  const includeAssets = req.query.includeAssets !== 'false';
+
+  console.log(`[Export] Generating vault ZIP archive (MD: ${includeMD}, Assets: ${includeAssets})...`);
 
   const now = new Date();
   const year = now.getFullYear();
@@ -450,7 +453,16 @@ router.get('/export', authenticateJWT, (req, res) => {
   const day = String(now.getDate()).padStart(2, '0');
   const hours = String(now.getHours()).padStart(2, '0');
   const minutes = String(now.getMinutes()).padStart(2, '0');
-  const filename = `obsidian-vault-export-${year}${month}${day}-${hours}${minutes}.zip`;
+
+  let typePrefix = 'export';
+  if (includeMD && !includeAssets) {
+    typePrefix = 'notes';
+  } else if (!includeMD && includeAssets) {
+    typePrefix = 'assets';
+  } else if (!includeMD && !includeAssets) {
+    typePrefix = 'empty';
+  }
+  const filename = `obsidian-vault-${typePrefix}-${year}${month}${day}-${hours}${minutes}.zip`;
 
   res.attachment(filename);
   const archive = archiver('zip', { zlib: { level: 9 } });
@@ -470,10 +482,18 @@ router.get('/export', authenticateJWT, (req, res) => {
     const fullPath = join(vaultPath, item);
     const stat = fs.statSync(fullPath);
 
-    if (stat.isDirectory()) {
-      archive.directory(fullPath, item);
+    if (item === 'assets') {
+      if (includeAssets) {
+        archive.directory(fullPath, item);
+      }
     } else {
-      archive.file(fullPath, { name: item });
+      if (includeMD) {
+        if (stat.isDirectory()) {
+          archive.directory(fullPath, item);
+        } else {
+          archive.file(fullPath, { name: item });
+        }
+      }
     }
   }
 
